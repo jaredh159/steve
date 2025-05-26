@@ -1,0 +1,4 @@
+- [ ] read files from the filesystem (platform)
+- [ ] write file to the filesystem (platform)
+- [ ] express the lexer, parser, typechecker in steve
+- [ ] get cli args from invocation

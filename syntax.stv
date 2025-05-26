@@ -1,0 +1,28 @@
+#bin: stv.platforms.concrete.cli
+#mem: implicit
+#std: true
+
+// or...
+#lib: stv.platforms.desc.sys
+#mem: explicit
+#std: true
+
+rt main() -> pf.MainReturn {
+  let msg = a"hello world";
+  // mut thing = 3;
+  // 3 += 1;
+  pf.print(msg);
+  .ok(0)
+}
+
+fn add(~a: u8 to b: u8) -> u8 {
+  a + b
+}
+
+fn div(a: u8, b: u8) -> Res<u8> {
+
+}
+
+rt greet(name: astr) {
+  p.print(f"hello %{name}!");
+}

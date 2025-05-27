@@ -26,3 +26,8 @@ fn div(a: u8, b: u8) -> Res<u8> {
 rt greet(name: astr) {
   p.print(f"hello %{name}!");
 }
+
+# ACL
+fn foo() -> void {} # private
+pkg fn bar() -> void {} # package
+pub fn baz() -> void {} # public

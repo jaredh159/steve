@@ -1,5 +1,6 @@
 - [ ] lex, parse, typecheck snippet
 - [ ] treesitter grammar
+- [ ] formatter
 - [ ] basic lsp server
 - [ ] emit arm assembly
 
@@ -11,6 +12,6 @@
 rt main() -> pf.MainReturn {
   let msg = a"hello steve!";
   pf.print(msg);
-  .ok(0)
+  .ok(17)
 }
 ```

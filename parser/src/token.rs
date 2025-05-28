@@ -4,11 +4,12 @@ use crate::src_loc::SrcLoc;
 pub enum TokenKind {
   Arrow,
   Let,
-  Routine,
+  Rt,
   Ident,
   IntLit,
   AsciiLit,
   Eq,
+  Fn,
   Semicolon,
   Pf,
   Dot,

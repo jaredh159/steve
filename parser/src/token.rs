@@ -1,15 +1,16 @@
-use crate::src_loc::SrcLoc;
+use crate::str_pool::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
   Arrow,
   Let,
-  Rt,
+  Routine,
   Ident,
   IntLit,
+  InvalidUtf8,
   AsciiLit,
   Eq,
-  Fn,
+  Function,
   Semicolon,
   Pf,
   Dot,
@@ -20,14 +21,34 @@ pub enum TokenKind {
   Eof,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Token {
-  pub kind: TokenKind,
-  pub loc: SrcLoc,
+impl Token {
+  pub const fn new(kind: TokenKind, offset: u32, index: Index) -> Self {
+    Token { kind, offset, index }
+  }
+
+  pub fn lexeme<'a>(&self, strings: &'a StringPool) -> &'a str {
+    match self.kind {
+      TokenKind::Arrow => "->",
+      TokenKind::Let => "let",
+      TokenKind::Routine => "rt",
+      TokenKind::Eq => "=",
+      TokenKind::Function => "fn",
+      TokenKind::Semicolon => ";",
+      TokenKind::Pf => "pf",
+      TokenKind::Dot => ".",
+      TokenKind::LParen => "(",
+      TokenKind::RParen => ")",
+      TokenKind::LBrace => "{",
+      TokenKind::RBrace => "}",
+      TokenKind::InvalidUtf8 | TokenKind::Eof => "",
+      TokenKind::Ident | TokenKind::IntLit | TokenKind::AsciiLit => strings.get(self.index),
+    }
+  }
 }
 
-impl Token {
-  pub fn new(kind: TokenKind, loc: SrcLoc) -> Self {
-    Token { kind, loc }
-  }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Token {
+  pub kind: TokenKind,
+  pub offset: u32,
+  pub index: Index,
 }

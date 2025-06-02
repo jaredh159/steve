@@ -1,7 +1,7 @@
 use crate::ast::*;
 use crate::diag::Diagnostic;
 
-pub fn prelude(_entry: &[u8]) -> Result<Module, Diagnostic> {
+pub const fn prelude(_entry: &[u8]) -> Result<Module, Diagnostic> {
   Ok(Module {
     kind: ModuleKind::Bin(vec![]),
     platform: PlatformSpec {},

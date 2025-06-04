@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod diag;
 pub mod lexer;
+pub mod node;
 pub mod parser;
 pub mod preproc;
 pub mod str_pool;

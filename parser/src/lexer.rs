@@ -22,18 +22,25 @@ impl Lexer {
     Self::new(src.bytes().collect())
   }
 
-  pub fn tokens(&mut self) -> Vec<Token> {
+  pub fn lex(mut self) -> (Vec<Token>, Vec<u8>, StringPool) {
     let mut tokens = Vec::with_capacity(64);
     while !self.eof() {
       tokens.push(self.next_token());
     }
-    tokens
+    (tokens, self.src, self.strings)
   }
 
   fn simple_token(&mut self, kind: TokenKind) -> Token {
     let token = Token::new(kind, self.pos as u32, self.strings.empty());
     let len = match kind {
-      T::Eq | T::Semicolon | T::Dot | T::LParen | T::RParen | T::LBrace | T::RBrace => 1,
+      T::Assign
+      | T::Semicolon
+      | T::Dot
+      | T::LParen
+      | T::RParen
+      | T::LBrace
+      | T::RBrace
+      | T::Comma => 1,
       T::Let => 3,
       T::Arrow | T::Function | T::Pf => 2,
       T::Routine => 5,
@@ -59,7 +66,8 @@ impl Lexer {
       b'.' => self.simple_token(T::Dot),
       b'(' => self.simple_token(T::LParen),
       b')' => self.simple_token(T::RParen),
-      b'=' => self.simple_token(T::Eq),
+      b',' => self.simple_token(T::Comma),
+      b'=' => self.simple_token(T::Assign),
       b'-' if self.peek() == b'>' => self.simple_token(T::Arrow),
       b'a' if self.peek() == b'"' => self.ascii_lit(),
       b if b.is_ascii_digit() => self.int_lit(),
@@ -141,7 +149,7 @@ mod tests {
 
   #[test]
   fn single_char_tokens_and_whitespace() {
-    let mut lexer = Lexer::new(b"{ };.(\t)\n=".to_vec());
+    let mut lexer = Lexer::new(b"{ };.(\t)\n=,".to_vec());
     let cases: &[(T, u32, &str)] = &[
       (T::LBrace, 0, "{"),
       (T::RBrace, 2, "}"),
@@ -149,8 +157,9 @@ mod tests {
       (T::Dot, 4, "."),
       (T::LParen, 5, "("),
       (T::RParen, 7, ")"),
-      (T::Eq, 9, "="),
-      (T::Eof, 10, ""),
+      (T::Assign, 9, "="),
+      (T::Comma, 10, ","),
+      (T::Eof, 11, ""),
     ];
     for (kind, offset, lexeme) in cases {
       let token = lexer.next_token();
@@ -197,27 +206,27 @@ rt main() -> pf.MainReturn {
       (T::LParen, "("),
       (T::RParen, ")"),
       (T::Arrow, "->"),
-      (T::Pf, "pf"),
+      (T::Pf, "pf"), // 5
       (T::Dot, "."),
       (T::Ident, "MainReturn"),
       (T::LBrace, "{"),
       (T::Let, "let"),
-      (T::Ident, "msg"),
-      (T::Eq, "="),
+      (T::Ident, "msg"), // 10
+      (T::Assign, "="),
       (T::AsciiLit, "hello steve!"),
       (T::Semicolon, ";"),
       (T::Pf, "pf"),
-      (T::Dot, "."),
+      (T::Dot, "."), // 15
       (T::Ident, "print"),
       (T::LParen, "("),
       (T::Ident, "msg"),
       (T::RParen, ")"),
-      (T::Semicolon, ";"),
+      (T::Semicolon, ";"), // 20
       (T::Dot, "."),
       (T::Ident, "ok"),
       (T::LParen, "("),
       (T::IntLit, "17"),
-      (T::RParen, ")"),
+      (T::RParen, ")"), // 25
       (T::RBrace, "}"),
     ];
     for (tkind, lexeme) in cases {

@@ -4,12 +4,13 @@ use crate::str_pool::*;
 pub enum TokenKind {
   Arrow,
   Let,
+  Comma,
   Routine,
   Ident,
   IntLit,
   InvalidUtf8,
   AsciiLit,
-  Eq,
+  Assign,
   Function,
   Semicolon,
   Pf,
@@ -29,9 +30,10 @@ impl Token {
   pub fn lexeme<'a>(&self, strings: &'a StringPool) -> &'a str {
     match self.kind {
       TokenKind::Arrow => "->",
+      TokenKind::Comma => ",",
       TokenKind::Let => "let",
       TokenKind::Routine => "rt",
-      TokenKind::Eq => "=",
+      TokenKind::Assign => "=",
       TokenKind::Function => "fn",
       TokenKind::Semicolon => ";",
       TokenKind::Pf => "pf",

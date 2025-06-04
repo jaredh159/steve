@@ -6,5 +6,8 @@ edition = "2024"
 [dependencies]
 bilge = "0.2.0"
 
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+
 [lints]
 workspace = true

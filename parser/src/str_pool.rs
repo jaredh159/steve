@@ -6,8 +6,14 @@ pub struct StringPool {
   strs: Vec<Interned>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub struct Index(u32);
+
+impl std::fmt::Debug for Index {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "StringPool.Index({})", self.0)
+  }
+}
 
 #[derive(Debug)]
 struct Interned {

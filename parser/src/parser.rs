@@ -1,11 +1,11 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
-use crate::ast::*;
 use crate::diag::Diagnostic;
 use crate::lexer::Lexer;
 use crate::node::{DataNodeKind as N, *};
 use crate::str_pool::StringPool;
 use crate::token::{Token, TokenKind, TokenKind as T};
+use crate::{ast::*, ast_nodes::*};
 use ParseError as E;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,11 +163,21 @@ impl Parser {
     Some(Expr::Ident { token: self.advance() })
   }
 
+  fn parse_implicit_member_access(&mut self) -> Option<Expr> {
+    let dot_token = self.advance(); // dot
+    let Some(ident_token) = self.consume_expecting(T::Ident) else {
+      self.synchronize();
+      return None;
+    };
+    self.nodes.push_expr(Expr::Ident { token: ident_token });
+    Some(Expr::MemberAccess { token: dot_token, implicit: true })
+  }
+
   const fn parse_platform_keyword(&mut self) -> Option<Expr> {
     Some(Expr::PlatformKeyword { token: self.advance() })
   }
 
-  fn parse_field_access(&mut self, lhs: &Expr) -> Option<Expr> {
+  fn parse_infix_member_access(&mut self, lhs: &Expr) -> Option<Expr> {
     let dot_token = self.advance(); // dot
     let Some(ident_token) = self.consume_expecting(T::Ident) else {
       self.synchronize();
@@ -175,7 +185,7 @@ impl Parser {
     };
     self.nodes.push_expr(lhs.clone());
     self.nodes.push_expr(Expr::Ident { token: ident_token });
-    Some(Expr::FieldAccess { token: dot_token })
+    Some(Expr::MemberAccess { token: dot_token, implicit: false })
   }
 
   fn parse_call_expression(&mut self, lhs: &Expr) -> Option<Expr> {
@@ -194,13 +204,16 @@ impl Parser {
     }
     loop {
       let Some(arg) = self.parse_expr(Prec::Lowest) else {
+        // TODO: error?
         return count;
       };
       self.nodes.push_expr(arg);
       count += 1;
       if self.cur_token_is(end) {
+        self.advance(); // `)`
         return count;
-        // TODO: continue on comma, lol
+      } else if self.cur_token_is(T::Comma) {
+        self.advance();
       }
     }
   }
@@ -211,7 +224,7 @@ impl Parser {
 
   fn infix_parse_fn(&mut self) -> Option<InfixParseFn> {
     match self.cur_token().kind {
-      T::Dot => Some(Self::parse_field_access),
+      T::Dot => Some(Self::parse_infix_member_access),
       T::LParen => Some(Self::parse_call_expression),
       T::Arrow | T::Let | T::Routine | T::Ident | T::IntLit | T::InvalidUtf8 => todo!(),
       T::AsciiLit | T::Assign | T::Function | T::Semicolon | T::Pf | T::RParen => todo!(),
@@ -220,12 +233,13 @@ impl Parser {
   }
 
   fn prefix_parse_fn(&mut self) -> Option<PrefixParseFn> {
-    match self.cur_token().kind {
+    match dbg!(self.cur_token()).kind {
       T::AsciiLit => Some(Self::parse_ascii_lit),
       T::Pf => Some(Self::parse_platform_keyword),
       T::Ident => Some(Self::parse_ident),
+      T::Dot => Some(Self::parse_implicit_member_access),
       T::Arrow | T::Let | T::Routine | T::InvalidUtf8 | T::Assign => todo!(),
-      T::Function | T::Semicolon | T::Dot | T::LParen | T::RParen => todo!(),
+      T::Function | T::Semicolon | T::LParen | T::RParen => todo!(),
       T::IntLit | T::Comma | T::LBrace | T::RBrace | T::Eof => todo!(),
     }
   }
@@ -331,12 +345,12 @@ rt main() -> pf.MainReturn {
     assert_eq!(let_stmt, Stmt::Let { token: 9, has_type: false });
 
     let mut data_nodes = Vec::new();
-    let_stmt.into_data_nodes(&mut parser.nodes, &mut data_nodes);
+    let_stmt.into_nodes(&mut parser.nodes, &mut data_nodes);
     assert_eq!(
       &data_nodes,
       &[
         DataNode {
-          kind: N::VarDeclStmt(VarDecl_D::new(false)),
+          kind: N::VarDeclStmt { has_type: false },
           token: 9
         },
         DataNode { kind: N::Ident, token: 10 }, // var decl ident `msg`
@@ -353,16 +367,46 @@ rt main() -> pf.MainReturn {
     );
 
     let mut data_nodes = Vec::new();
-    expr_stmt.into_data_nodes(&mut parser.nodes, &mut data_nodes);
+    expr_stmt.into_nodes(&mut parser.nodes, &mut data_nodes);
     assert_eq!(
       &data_nodes,
       &[
         DataNode { kind: N::ExprStmt, token: 14 },
-        DataNode { kind: N::CallExpr(1), token: 17 },
+        DataNode {
+          kind: N::CallExpr { num_args: 1 },
+          token: 17
+        },
         DataNode { kind: N::Ident, token: 18 }, // arg 0 ident "msg"
-        DataNode { kind: N::FieldAccess, token: 15 }, // call expression callee
+        // call expression callee
+        DataNode {
+          kind: N::MemberAccess { implicit: false },
+          token: 15
+        },
         DataNode { kind: N::PlatformKeyword, token: 14 }, // field access `receiver` (pf)
-        DataNode { kind: N::Ident, token: 16 }, // field access`field` (print)
+        DataNode { kind: N::Ident, token: 16 },           // field access`field` (print)
+      ]
+    );
+    assert!(parser.nodes.is_empty());
+
+    let ret_stmt = parser.parse_stmt().unwrap();
+    assert_eq!(ret_stmt, Stmt::Return { token: 21 });
+    let mut data_nodes = Vec::new();
+    ret_stmt.into_nodes(&mut parser.nodes, &mut data_nodes);
+    assert_eq!(
+      &data_nodes,
+      &[
+        DataNode { kind: N::ReturnStmt, token: 21 },
+        DataNode {
+          kind: N::CallExpr { num_args: 1 },
+          token: 23
+        },
+        DataNode { kind: N::IntLit, token: 24 }, // arg 0 int lit `17`
+        // callee
+        DataNode {
+          kind: N::MemberAccess { implicit: true },
+          token: 21
+        },
+        DataNode { kind: N::Ident, token: 22 }, // "ok"
       ]
     );
     assert!(parser.nodes.is_empty());

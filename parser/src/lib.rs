@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod ast_nodes;
 pub mod diag;
 pub mod lexer;
 pub mod node;

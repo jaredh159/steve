@@ -1,26 +1,56 @@
+#![allow(non_camel_case_types)]
+use bilge::prelude::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DataNode {
   pub kind: DataNodeKind,
   pub token: u32,
 }
 
+impl DataNode {
+  pub const fn new(kind: DataNodeKind, token: u32) -> Self {
+    DataNode { kind, token }
+  }
+}
+
+#[derive(Clone, Copy)]
 pub union Node {
-  data: DataNode,
-  num: u32,
+  ast: DataNode,
+  int: u64,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum ExpandedNode {
-  Data(DataNode),
-  Num(u32),
+impl Node {
+  pub const fn ast(kind: DataNodeKind, token: u32) -> Self {
+    Node { ast: DataNode::new(kind, token) }
+  }
+  pub const fn int(int: u64) -> Self {
+    Node { int }
+  }
+  pub const fn as_ast(self) -> DataNode {
+    unsafe { self.ast }
+  }
+  pub const fn as_int(self) -> u64 {
+    unsafe { self.int }
+  }
 }
 
-// NB: size will grow to 4 when you add a 16 bitstruct, that's OK
+impl std::fmt::Debug for Node {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "Node(<union>)")
+  }
+}
+
+impl From<DataNode> for Node {
+  fn from(ast: DataNode) -> Self {
+    Node { ast }
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataNodeKind {
   VarDeclStmt { has_type: bool },
   AsciiLit,
-  IntLit,
+  IntLit(IntData),
   ExprStmt,
   CallExpr { num_args: u8 },
   MemberAccess { implicit: bool },
@@ -30,12 +60,15 @@ pub enum DataNodeKind {
   ImplicitMemberAccess,
 }
 
-// #![allow(non_camel_case_types)]
-// use bilge::prelude::*;
+#[bitsize(16)]
+#[derive(FromBits, DebugBits, Clone, Copy, Eq, PartialEq)]
+pub struct IntData {
+  pub len: u2,
+  pub payload: u14,
+}
 
-// #[bitsize(16)]
-// #[derive(FromBits, DebugBits, Clone, Copy, Eq, PartialEq)]
-// pub struct VarDecl_D {
-//   pub has_type: bool,
-//   reserved: u15,
-// }
+#[test]
+fn sizes() {
+  assert!(std::mem::size_of::<DataNode>() <= 8);
+  assert!(std::mem::size_of::<Node>() <= 8);
+}

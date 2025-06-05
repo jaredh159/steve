@@ -1,5 +1,7 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
+use bilge::prelude::*;
+
 use crate::diag::Diagnostic;
 use crate::lexer::Lexer;
 use crate::node::{DataNodeKind as N, *};
@@ -12,6 +14,7 @@ use ParseError as E;
 pub enum ParseError {
   ExpectedToken { kind: TokenKind, found: Token },
   ExpectedExpression(Token),
+  InvalidIntLit(Token),
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd, Copy, Clone, Debug)]
@@ -28,17 +31,25 @@ enum Prec {
 }
 
 type PrefixParseFn = fn(&mut Parser) -> Option<Expr>;
-type InfixParseFn = fn(&mut Parser, &Expr) -> Option<Expr>;
+type InfixParseFn = fn(&mut Parser, Expr) -> Option<Expr>;
 
 #[derive(Debug)]
 pub struct Parser {
   src: Vec<u8>,
   strings: StringPool,
   tokens: Vec<Token>,
-  d_nodes: Vec<DataNode>,
-  nodes: AstNodes,
+  nodes: Vec<Node>,
+  stack: AstNodes,
   errors: Vec<ParseError>,
   pos: usize,
+}
+
+#[derive(Debug)]
+pub struct Parsed {
+  pub src: Vec<u8>,
+  pub strings: StringPool,
+  pub tokens: Vec<Token>,
+  pub result: Result<Vec<Node>, Vec<ParseError>>,
 }
 
 impl Parser {
@@ -49,22 +60,31 @@ impl Parser {
       tokens,
       src,
       strings,
-      d_nodes: Vec::with_capacity(64),
-      nodes: AstNodes::with_capacity(32),
+      nodes: Vec::with_capacity(64),
+      stack: AstNodes::with_capacity(32),
       errors: Vec::new(),
       pos: 0,
     }
   }
 
-  pub fn parse(mut self) -> Result<Vec<DataNode>, Vec<ParseError>> {
+  pub fn parse(mut self) -> Parsed {
     self.todo_skip_open_main();
-    // while self.parse_stmt() {}
-    // if self.errors.is_empty() {
-    //   Ok(self.nodes)
-    // } else {
-    //   Err(self.errors)
-    // }
-    Ok(vec![])
+    loop {
+      if self.cur_token_is(T::RBrace) {
+        self.advance();
+        break;
+      } else if let Some(stmt) = self.parse_stmt() {
+        stmt.into_nodes(&mut self.stack, &mut self.nodes);
+      } else {
+        break;
+      }
+    }
+    Parsed {
+      src: self.src,
+      strings: self.strings,
+      tokens: self.tokens,
+      result: if self.errors.is_empty() { Ok(self.nodes) } else { Err(self.errors) },
+    }
   }
 
   fn parse_stmt(&mut self) -> Option<Stmt> {
@@ -81,77 +101,56 @@ impl Parser {
 
   fn parse_var_decl_stmt(&mut self) -> Option<Stmt> {
     if !self.cur_token_is(T::Let) || !self.peek_token_is(T::Ident) {
-      eprintln!("1");
       return None;
     }
     let token = self.advance();
     let ident = Expr::Ident { token: self.advance() };
-    self.nodes.push_expr(ident);
+    self.stack.push_expr(ident);
 
     // TODO: parse opt. type annotation, setting decl node if present
 
     if self.consume_expecting(T::Assign).is_none() {
       self.synchronize();
-      eprintln!("2");
       return None;
     }
 
     let Some(expr) = self.parse_expr(Prec::Lowest) else {
       self.errors.push(E::ExpectedExpression(self.cur_token()));
-      eprintln!("3");
       return None;
     };
 
     self.consume_expecting(T::Semicolon);
-    self.nodes.push_expr(expr);
+    self.stack.push_expr(expr);
     Some(Stmt::Let { token, has_type: false })
   }
 
   fn parse_expr_stmt(&mut self) -> Option<Stmt> {
-    let stmt = Stmt::Expression { token: self.pos as u32 };
+    let token = self.pos as u32;
     let expr = self.parse_expr(Prec::Lowest)?;
-    self.consume_expecting(T::Semicolon);
-    self.nodes.push_expr(expr);
-    Some(stmt)
-    // monkey...
-    // let initial_token = self.cur_token.clone();
-    // let expression = self.parse_expression(Precedence::Lowest)?;
-    // if self.peek_token == Token::Semicolon {
-    //   self.advance();
-    // }
-    // Some(Statement::Expression(initial_token, expression))
-    // None
+    self.stack.push_expr(expr);
+    if self.cur_token_is(T::Semicolon) {
+      self.advance();
+      Some(Stmt::Expression { token })
+    } else {
+      Some(Stmt::Return { token })
+    }
   }
 
   fn parse_expr(&mut self, prec: Prec) -> Option<Expr> {
-    let Some(prefix_parser) = self.prefix_parse_fn() else {
+    let Some(mut expr) = self.prefix_parse_fn().and_then(|f| f(self)) else {
       self.errors.push(E::ExpectedExpression(self.cur_token()));
       return None;
     };
-    let Some(mut expr) = prefix_parser(self) else {
-      self.errors.push(E::ExpectedExpression(self.cur_token()));
-      return None;
-    };
-    if self.cur_token_is(T::Semicolon) {
-      self.advance();
-      return Some(expr);
-    }
-    while !self.peek_token_is(T::Semicolon) && prec < precedence(Some(self.cur_token())) {
+    loop {
+      if self.peek_token_is(T::Semicolon) || prec >= precedence(Some(self.cur_token())) {
+        break;
+      }
       if let Some(infix_fn) = self.infix_parse_fn() {
-        if let Some(next) = infix_fn(self, &expr) {
-          expr = next;
-        }
+        expr = infix_fn(self, expr)?;
+      } else {
+        return Some(expr);
       }
     }
-    // while self.peek_token != Token::Semicolon && precedence < self.peek_token.precedence()
-    // {
-    //   if let Some(infix_fn) = self.infix_parse_fn() {
-    //     self.advance();
-    //     expr = infix_fn(self, expr.clone()).unwrap_or(expr);
-    //   } else {
-    //     return Some(expr);
-    //   }
-    // }
     Some(expr)
   }
 
@@ -163,13 +162,26 @@ impl Parser {
     Some(Expr::Ident { token: self.advance() })
   }
 
+  fn parse_int_lit(&mut self) -> Option<Expr> {
+    let lexeme = self.tokens[self.pos].lexeme(&self.strings);
+    // TODO: handle negative numbers, etc...
+    let value = match lexeme.parse::<u64>() {
+      Ok(value) => value,
+      Err(_) => {
+        self.errors.push(E::InvalidIntLit(self.cur_token()));
+        0
+      }
+    };
+    Some(Expr::IntLit { value, token: self.advance() })
+  }
+
   fn parse_implicit_member_access(&mut self) -> Option<Expr> {
-    let dot_token = self.advance(); // dot
+    let dot_token = self.advance(); // `.`
     let Some(ident_token) = self.consume_expecting(T::Ident) else {
       self.synchronize();
       return None;
     };
-    self.nodes.push_expr(Expr::Ident { token: ident_token });
+    self.stack.push_expr(Expr::Ident { token: ident_token });
     Some(Expr::MemberAccess { token: dot_token, implicit: true })
   }
 
@@ -177,20 +189,20 @@ impl Parser {
     Some(Expr::PlatformKeyword { token: self.advance() })
   }
 
-  fn parse_infix_member_access(&mut self, lhs: &Expr) -> Option<Expr> {
-    let dot_token = self.advance(); // dot
+  fn parse_infix_member_access(&mut self, lhs: Expr) -> Option<Expr> {
+    let dot_token = self.advance(); // `.`
     let Some(ident_token) = self.consume_expecting(T::Ident) else {
       self.synchronize();
       return None;
     };
-    self.nodes.push_expr(lhs.clone());
-    self.nodes.push_expr(Expr::Ident { token: ident_token });
+    self.stack.push_expr(lhs);
+    self.stack.push_expr(Expr::Ident { token: ident_token });
     Some(Expr::MemberAccess { token: dot_token, implicit: false })
   }
 
-  fn parse_call_expression(&mut self, lhs: &Expr) -> Option<Expr> {
-    let token = self.advance(); // (
-    self.nodes.push_expr(lhs.clone());
+  fn parse_call_expression(&mut self, lhs: Expr) -> Option<Expr> {
+    let token = self.advance(); // `(`
+    self.stack.push_expr(lhs);
     let num_args = self.parse_expr_list(T::RParen);
     let expr = Expr::CallExpr { token, num_args };
     Some(expr)
@@ -207,7 +219,7 @@ impl Parser {
         // TODO: error?
         return count;
       };
-      self.nodes.push_expr(arg);
+      self.stack.push_expr(arg);
       count += 1;
       if self.cur_token_is(end) {
         self.advance(); // `)`
@@ -216,10 +228,6 @@ impl Parser {
         self.advance();
       }
     }
-  }
-
-  fn push_node(&mut self, kind: DataNodeKind) {
-    self.d_nodes.push(DataNode { kind, token: self.pos as u32 });
   }
 
   fn infix_parse_fn(&mut self) -> Option<InfixParseFn> {
@@ -233,14 +241,15 @@ impl Parser {
   }
 
   fn prefix_parse_fn(&mut self) -> Option<PrefixParseFn> {
-    match dbg!(self.cur_token()).kind {
+    match self.cur_token().kind {
       T::AsciiLit => Some(Self::parse_ascii_lit),
       T::Pf => Some(Self::parse_platform_keyword),
       T::Ident => Some(Self::parse_ident),
       T::Dot => Some(Self::parse_implicit_member_access),
+      T::IntLit => Some(Self::parse_int_lit),
       T::Arrow | T::Let | T::Routine | T::InvalidUtf8 | T::Assign => todo!(),
       T::Function | T::Semicolon | T::LParen | T::RParen => todo!(),
-      T::IntLit | T::Comma | T::LBrace | T::RBrace | T::Eof => todo!(),
+      T::Comma | T::LBrace | T::RBrace | T::Eof => todo!(),
     }
   }
 
@@ -257,7 +266,7 @@ impl Parser {
   }
 
   fn peek_token_is(&self, kind: TokenKind) -> bool {
-    if self.pos >= self.tokens.len() {
+    if self.pos >= self.tokens.len() - 1 {
       return kind == T::Eof;
     }
     self.tokens[self.pos + 1].kind == kind
@@ -326,10 +335,6 @@ mod tests {
   use super::*;
   use pretty_assertions::assert_eq;
 
-  fn idx(idx: u32) -> Index {
-    Index::new(idx)
-  }
-
   #[test]
   fn first_goal_program() {
     let input = r#"
@@ -338,77 +343,26 @@ rt main() -> pf.MainReturn {
   pf.print(msg);
   .ok(17)
 }"#;
-    let mut parser = Parser::new_str(input);
-    parser.todo_skip_open_main();
-
-    let let_stmt = parser.parse_stmt().unwrap();
-    assert_eq!(let_stmt, Stmt::Let { token: 9, has_type: false });
-
-    let mut data_nodes = Vec::new();
-    let_stmt.into_nodes(&mut parser.nodes, &mut data_nodes);
+    let parser = Parser::new_str(input);
+    let nodes = parser.parse().result.unwrap();
     assert_eq!(
-      &data_nodes,
+      &nodes.into_iter().map(Node::as_ast).collect::<Vec<_>>(),
       &[
-        DataNode {
-          kind: N::VarDeclStmt { has_type: false },
-          token: 9
-        },
-        DataNode { kind: N::Ident, token: 10 }, // var decl ident `msg`
-        DataNode { kind: N::AsciiLit, token: 12 },
+        DataNode::new(N::VarDeclStmt { has_type: false }, 9),
+        DataNode::new(N::Ident, 10),
+        DataNode::new(N::AsciiLit, 12),
+        DataNode::new(N::ExprStmt, 14),
+        DataNode::new(N::CallExpr { num_args: 1 }, 17),
+        DataNode::new(N::Ident, 18),
+        DataNode::new(N::MemberAccess { implicit: false }, 15),
+        DataNode::new(N::PlatformKeyword, 14),
+        DataNode::new(N::Ident, 16),
+        DataNode::new(N::ReturnStmt, 21),
+        DataNode::new(N::CallExpr { num_args: 1 }, 23),
+        DataNode::new(N::IntLit(IntData::new(u2::new(0), u14::new(17))), 24),
+        DataNode::new(N::MemberAccess { implicit: true }, 21),
+        DataNode::new(N::Ident, 22),
       ]
     );
-    assert!(parser.nodes.is_empty());
-
-    let expr_stmt = parser.parse_stmt().unwrap();
-    assert_eq!(expr_stmt, Stmt::Expression { token: 14 });
-    assert_eq!(
-      parser.nodes.last().unwrap(),
-      &Expr::CallExpr { token: 17, num_args: 1 }
-    );
-
-    let mut data_nodes = Vec::new();
-    expr_stmt.into_nodes(&mut parser.nodes, &mut data_nodes);
-    assert_eq!(
-      &data_nodes,
-      &[
-        DataNode { kind: N::ExprStmt, token: 14 },
-        DataNode {
-          kind: N::CallExpr { num_args: 1 },
-          token: 17
-        },
-        DataNode { kind: N::Ident, token: 18 }, // arg 0 ident "msg"
-        // call expression callee
-        DataNode {
-          kind: N::MemberAccess { implicit: false },
-          token: 15
-        },
-        DataNode { kind: N::PlatformKeyword, token: 14 }, // field access `receiver` (pf)
-        DataNode { kind: N::Ident, token: 16 },           // field access`field` (print)
-      ]
-    );
-    assert!(parser.nodes.is_empty());
-
-    let ret_stmt = parser.parse_stmt().unwrap();
-    assert_eq!(ret_stmt, Stmt::Return { token: 21 });
-    let mut data_nodes = Vec::new();
-    ret_stmt.into_nodes(&mut parser.nodes, &mut data_nodes);
-    assert_eq!(
-      &data_nodes,
-      &[
-        DataNode { kind: N::ReturnStmt, token: 21 },
-        DataNode {
-          kind: N::CallExpr { num_args: 1 },
-          token: 23
-        },
-        DataNode { kind: N::IntLit, token: 24 }, // arg 0 int lit `17`
-        // callee
-        DataNode {
-          kind: N::MemberAccess { implicit: true },
-          token: 21
-        },
-        DataNode { kind: N::Ident, token: 22 }, // "ok"
-      ]
-    );
-    assert!(parser.nodes.is_empty());
   }
 }

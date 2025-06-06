@@ -1,7 +1,9 @@
 pub mod ast;
 pub mod ast_nodes;
 pub mod diag;
+pub mod into_nodes;
 pub mod lexer;
+pub mod meta;
 pub mod node;
 pub mod parser;
 pub mod preproc;

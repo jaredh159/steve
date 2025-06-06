@@ -50,7 +50,9 @@ impl From<DataNode> for Node {
 pub enum DataNodeKind {
   VarDeclStmt { has_type: bool },
   AsciiLit,
+  Type { num_tokens: u16 },
   IntLit(IntData),
+  FnDecl(FnDeclData),
   ExprStmt,
   CallExpr { num_args: u8 },
   MemberAccess { implicit: bool },
@@ -65,6 +67,15 @@ pub enum DataNodeKind {
 pub struct IntData {
   pub len: u2,
   pub payload: u14,
+}
+
+#[bitsize(16)]
+#[derive(FromBits, DebugBits, Clone, Copy, Eq, PartialEq)]
+pub struct FnDeclData {
+  pub num_args: u8,
+  pub is_pure: bool,
+  pub discardable: bool,
+  pub reserved: u6, // TODO: access
 }
 
 #[test]

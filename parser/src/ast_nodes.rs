@@ -32,6 +32,7 @@ impl AstNodes {
     match node {
       AstNode::Expression(expr) => expr,
       AstNode::Statement(_) => panic!("AstNodes.pop_expr() found statement instead of expression"),
+      AstNode::Declaration(_) => panic!("AstNodes.pop_expr() found decl instead of expression"),
     }
   }
 
@@ -49,6 +50,7 @@ impl AstNodes {
     match node {
       AstNode::Expression(expr) => expr,
       AstNode::Statement(_) => panic!("AstNodes.get_expr() found statement instead of expression"),
+      AstNode::Declaration(_) => panic!("AstNodes.get_expr() found decl instead of expression"),
     }
   }
 
@@ -58,6 +60,7 @@ impl AstNodes {
     match node {
       AstNode::Statement(stmt) => stmt,
       AstNode::Expression(_) => panic!("AstNodes.get_stmt() found expression instead of statement"),
+      AstNode::Declaration(_) => panic!("AstNodes.get_stmt() found decl instead of statement"),
     }
   }
 }

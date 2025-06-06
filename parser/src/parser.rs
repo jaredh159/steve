@@ -3,6 +3,7 @@
 use bilge::prelude::*;
 
 use crate::diag::Diagnostic;
+use crate::into_nodes::IntoNodes;
 use crate::lexer::Lexer;
 use crate::node::{DataNodeKind as N, *};
 use crate::str_pool::StringPool;
@@ -14,6 +15,7 @@ use ParseError as E;
 pub enum ParseError {
   ExpectedToken { kind: TokenKind, found: Token },
   ExpectedExpression(Token),
+  ExpectedType(Token),
   InvalidIntLit(Token),
 }
 
@@ -68,7 +70,16 @@ impl Parser {
   }
 
   pub fn parse(mut self) -> Parsed {
-    self.todo_skip_open_main();
+    while self.parse_decl() {}
+    Parsed {
+      src: self.src,
+      strings: self.strings,
+      tokens: self.tokens,
+      result: if self.errors.is_empty() { Ok(self.nodes) } else { Err(self.errors) },
+    }
+  }
+
+  fn parse_block_expr(&mut self) {
     loop {
       if self.cur_token_is(T::RBrace) {
         self.advance();
@@ -78,12 +89,6 @@ impl Parser {
       } else {
         break;
       }
-    }
-    Parsed {
-      src: self.src,
-      strings: self.strings,
-      tokens: self.tokens,
-      result: if self.errors.is_empty() { Ok(self.nodes) } else { Err(self.errors) },
     }
   }
 
@@ -175,6 +180,78 @@ impl Parser {
     Some(Expr::IntLit { value, token: self.advance() })
   }
 
+  fn parse_decl(&mut self) -> bool {
+    self.parse_fn_decl()
+  }
+
+  fn parse_fn_decl(&mut self) -> bool {
+    if self.is_eof() {
+      return false;
+    }
+
+    let kind = self.tokens[self.pos].kind;
+    if !matches!(kind, T::Function | T::Routine) {
+      return false;
+    }
+    let fn_token = self.advance();
+
+    let Some(ident_token) = self.consume_expecting(T::Ident) else {
+      self.synchronize();
+      return false;
+    };
+    self.stack.push_expr(Expr::Ident { token: ident_token });
+
+    if self.consume_expecting(T::LParen).is_none() {
+      self.synchronize();
+      return false;
+    };
+
+    let num_args = self.parse_expr_list(T::RParen);
+    if self.consume_expecting(T::RParen).is_none() {
+      self.synchronize();
+      return false;
+    };
+
+    if self.consume_expecting(T::Arrow).is_none() {
+      self.synchronize();
+      return false;
+    };
+
+    let type_token = self.pos as u32;
+    let mut num_tokens: u16 = 0;
+    while !self.cur_token_is(T::LBrace) && !self.cur_token_is(T::Eof) {
+      self.advance();
+      num_tokens += 1;
+    }
+
+    if num_tokens == 0 {
+      self
+        .errors
+        .push(E::ExpectedType(self.tokens[type_token as usize]));
+      self.synchronize();
+      return false;
+    }
+
+    self
+      .stack
+      .push_expr(Expr::Type { token: type_token, num_tokens });
+
+    if self.consume_expecting(T::LBrace).is_none() {
+      self.synchronize();
+      return false;
+    };
+
+    let fn_decl = Decl::Function {
+      num_args,
+      token: fn_token,
+      is_pure: kind == T::Function,
+      discardable: false, // TODO
+    };
+    fn_decl.into_nodes(&mut self.stack, &mut self.nodes);
+    self.parse_block_expr();
+    true
+  }
+
   fn parse_implicit_member_access(&mut self) -> Option<Expr> {
     let dot_token = self.advance(); // `.`
     let Some(ident_token) = self.consume_expecting(T::Ident) else {
@@ -211,7 +288,6 @@ impl Parser {
   fn parse_expr_list(&mut self, end: TokenKind) -> u8 {
     let mut count: u8 = 0;
     if self.cur_token_is(end) {
-      self.advance();
       return count;
     }
     loop {
@@ -247,8 +323,9 @@ impl Parser {
       T::Ident => Some(Self::parse_ident),
       T::Dot => Some(Self::parse_implicit_member_access),
       T::IntLit => Some(Self::parse_int_lit),
-      T::Arrow | T::Let | T::Routine | T::InvalidUtf8 | T::Assign => todo!(),
-      T::Function | T::Semicolon | T::LParen | T::RParen => todo!(),
+      T::Routine | T::Function => todo!(),
+      T::Arrow | T::Let | T::InvalidUtf8 | T::Assign => todo!(),
+      T::Semicolon | T::LParen | T::RParen => todo!(),
       T::Comma | T::LBrace | T::RBrace | T::Eof => todo!(),
     }
   }
@@ -266,10 +343,14 @@ impl Parser {
   }
 
   fn peek_token_is(&self, kind: TokenKind) -> bool {
-    if self.pos >= self.tokens.len() - 1 {
+    if self.is_eof() {
       return kind == T::Eof;
     }
     self.tokens[self.pos + 1].kind == kind
+  }
+
+  const fn is_eof(&self) -> bool {
+    self.pos >= self.tokens.len() - 1
   }
 
   fn consume_expecting(&mut self, kind: TokenKind) -> Option<u32> {
@@ -292,15 +373,6 @@ impl Parser {
 
   fn synchronize(&mut self) {
     todo!("implement synchronize for error recovery")
-  }
-
-  fn todo_skip_open_main(&mut self) {
-    let mut token = self.tokens[0];
-    while token.kind != T::Eof && token.kind != T::LBrace {
-      self.pos += 1;
-      token = self.tokens[self.pos];
-    }
-    self.pos += 1;
   }
 }
 
@@ -348,15 +420,18 @@ rt main() -> pf.MainReturn {
     assert_eq!(
       &nodes.into_iter().map(Node::as_ast).collect::<Vec<_>>(),
       &[
+        DataNode::new(N::FnDecl(FnDeclData::new(0, false, false)), 0),
+        DataNode::new(N::Ident, 1),                  // "main"
+        DataNode::new(N::Type { num_tokens: 3 }, 5), // "pf.MainReturn"
         DataNode::new(N::VarDeclStmt { has_type: false }, 9),
-        DataNode::new(N::Ident, 10),
+        DataNode::new(N::Ident, 10), // "msg"
         DataNode::new(N::AsciiLit, 12),
         DataNode::new(N::ExprStmt, 14),
         DataNode::new(N::CallExpr { num_args: 1 }, 17),
         DataNode::new(N::Ident, 18),
         DataNode::new(N::MemberAccess { implicit: false }, 15),
         DataNode::new(N::PlatformKeyword, 14),
-        DataNode::new(N::Ident, 16),
+        DataNode::new(N::Ident, 16), // "print"
         DataNode::new(N::ReturnStmt, 21),
         DataNode::new(N::CallExpr { num_args: 1 }, 23),
         DataNode::new(N::IntLit(IntData::new(u2::new(0), u14::new(17))), 24),

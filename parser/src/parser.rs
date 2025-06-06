@@ -199,7 +199,6 @@ impl Parser {
       self.synchronize();
       return false;
     };
-    self.stack.push_expr(Expr::Ident { token: ident_token });
 
     if self.consume_expecting(T::LParen).is_none() {
       self.synchronize();
@@ -217,24 +216,19 @@ impl Parser {
       return false;
     };
 
-    let type_token = self.pos as u32;
-    let mut num_tokens: u16 = 0;
-    while !self.cur_token_is(T::LBrace) && !self.cur_token_is(T::Eof) {
-      self.advance();
-      num_tokens += 1;
-    }
+    let type_token = self.pos;
+    let type_expr = match self.parse_expr(Prec::Lowest) {
+      Some(expr @ Expr::MemberAccess { .. }) => expr,
+      Some(expr @ Expr::Ident { .. }) => expr,
+      _ => {
+        self.errors.push(E::ExpectedType(self.tokens[type_token]));
+        self.synchronize();
+        return false;
+      }
+    };
 
-    if num_tokens == 0 {
-      self
-        .errors
-        .push(E::ExpectedType(self.tokens[type_token as usize]));
-      self.synchronize();
-      return false;
-    }
-
-    self
-      .stack
-      .push_expr(Expr::Type { token: type_token, num_tokens });
+    self.stack.push_expr(type_expr);
+    self.stack.push_expr(Expr::Ident { token: ident_token });
 
     if self.consume_expecting(T::LBrace).is_none() {
       self.synchronize();
@@ -247,6 +241,7 @@ impl Parser {
       is_pure: kind == T::Function,
       discardable: false, // TODO
     };
+
     fn_decl.into_nodes(&mut self.stack, &mut self.nodes);
     self.parse_block_expr();
     true
@@ -421,8 +416,10 @@ rt main() -> pf.MainReturn {
       &nodes.into_iter().map(Node::as_ast).collect::<Vec<_>>(),
       &[
         DataNode::new(N::FnDecl(FnDeclData::new(0, false, false)), 0),
-        DataNode::new(N::Ident, 1),                  // "main"
-        DataNode::new(N::Type { num_tokens: 3 }, 5), // "pf.MainReturn"
+        DataNode::new(N::Ident, 1),                            // "main"
+        DataNode::new(N::MemberAccess { implicit: false }, 6), // type expr
+        DataNode::new(N::PlatformKeyword, 5),                  // "pf"
+        DataNode::new(N::Ident, 7),                            // "MainReturn"
         DataNode::new(N::VarDeclStmt { has_type: false }, 9),
         DataNode::new(N::Ident, 10), // "msg"
         DataNode::new(N::AsciiLit, 12),
@@ -430,8 +427,8 @@ rt main() -> pf.MainReturn {
         DataNode::new(N::CallExpr { num_args: 1 }, 17),
         DataNode::new(N::Ident, 18),
         DataNode::new(N::MemberAccess { implicit: false }, 15),
-        DataNode::new(N::PlatformKeyword, 14),
-        DataNode::new(N::Ident, 16), // "print"
+        DataNode::new(N::PlatformKeyword, 14), // "pf"
+        DataNode::new(N::Ident, 16),           // "print"
         DataNode::new(N::ReturnStmt, 21),
         DataNode::new(N::CallExpr { num_args: 1 }, 23),
         DataNode::new(N::IntLit(IntData::new(u2::new(0), u14::new(17))), 24),

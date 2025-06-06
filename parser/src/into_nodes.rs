@@ -20,14 +20,12 @@ impl IntoNodes for Decl {
           FnDecl(FnDeclData::new(num_args, is_pure, discardable)),
           token,
         ));
-        let Expr::Type { token: type_token, num_tokens } = stack.pop_expr() else {
-          panic!("Expected Type on top of AstNodes stack");
-        };
         let Expr::Ident { token: ident_token } = stack.pop_expr() else {
           panic!("Expected ident on top of AstNodes stack");
         };
         nodes.push(Node::ast(Ident, ident_token));
-        nodes.push(Node::ast(Type { num_tokens }, type_token));
+        let type_expr = stack.pop_expr();
+        type_expr.into_nodes(stack, nodes);
       }
     }
   }

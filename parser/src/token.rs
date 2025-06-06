@@ -1,4 +1,4 @@
-use crate::str_pool::*;
+use crate::internal::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
@@ -23,7 +23,7 @@ pub enum TokenKind {
 }
 
 impl Token {
-  pub const fn new(kind: TokenKind, offset: u32, index: Index) -> Self {
+  pub const fn new(kind: TokenKind, offset: u32, index: idx::StrPool) -> Self {
     Token { kind, offset, index }
   }
 
@@ -52,5 +52,5 @@ impl Token {
 pub struct Token {
   pub kind: TokenKind,
   pub offset: u32,
-  pub index: Index,
+  pub index: idx::StrPool,
 }

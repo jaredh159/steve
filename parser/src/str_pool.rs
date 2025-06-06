@@ -1,18 +1,9 @@
-#![allow(dead_code)]
+use crate::internal::*;
 
 #[derive(Debug)]
 pub struct StringPool {
   data: Vec<u8>,
   strs: Vec<Interned>,
-}
-
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub struct Index(u32);
-
-impl std::fmt::Debug for Index {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "StringPool.Index({})", self.0)
-  }
 }
 
 #[derive(Debug)]
@@ -59,21 +50,21 @@ impl StringPool {
     pool
   }
 
-  pub const fn empty(&self) -> Index {
-    Index(0)
+  pub const fn empty(&self) -> idx::StrPool {
+    idx::StrPool::new(0)
   }
 
-  pub const fn sentinel(&self, value: u32) -> Index {
-    Index(value)
+  pub const fn sentinel(&self, value: u32) -> idx::StrPool {
+    idx::StrPool::new(value)
   }
 
-  pub fn intern(&mut self, s: &str) -> Index {
+  pub fn intern(&mut self, s: &str) -> idx::StrPool {
     if s.is_empty() {
-      return Index(0);
+      return idx::StrPool::new(0);
     };
     for (i, interned) in self.strs.iter().enumerate().skip(1) {
       if interned.is(s.as_bytes(), self) {
-        return Index(i as u32);
+        return idx::StrPool::new(i as u32);
       }
     }
     assert!(self.strs.len() < u32::MAX as usize);
@@ -83,11 +74,11 @@ impl StringPool {
     let first = bytes[0];
     self.data.extend_from_slice(bytes);
     self.strs.push(Interned::new(start, s.len() as u16, first));
-    Index(index)
+    idx::StrPool::new(index)
   }
 
-  pub fn get(&self, index: Index) -> &str {
-    let interned = &self.strs[index.0 as usize];
+  pub fn get(&self, index: idx::StrPool) -> &str {
+    let interned = &self.strs[index.usize()];
     interned.str(self)
   }
 }
@@ -105,19 +96,19 @@ mod tests {
   #[test]
   fn interning_strs() {
     let mut pool = StringPool::new();
-    assert_eq!(pool.intern(""), Index(0));
-    assert_eq!(pool.intern(""), Index(0));
-    assert_eq!(pool.get(Index(0)), "");
-    assert_eq!(pool.intern("foo"), Index(1));
+    assert_eq!(pool.intern(""), idx::StrPool::new(0));
+    assert_eq!(pool.intern(""), idx::StrPool::new(0));
+    assert_eq!(pool.get(idx::StrPool::new(0)), "");
+    assert_eq!(pool.intern("foo"), idx::StrPool::new(1));
     assert_eq!(pool.data, b"foo");
-    assert_eq!(pool.intern("foo"), Index(1));
-    assert_eq!(pool.get(Index(1)), "foo");
-    assert_eq!(pool.intern("bar"), Index(2));
+    assert_eq!(pool.intern("foo"), idx::StrPool::new(1));
+    assert_eq!(pool.get(idx::StrPool::new(1)), "foo");
+    assert_eq!(pool.intern("bar"), idx::StrPool::new(2));
     assert_eq!(pool.data, b"foobar");
-    assert_eq!(pool.get(Index(2)), "bar");
-    assert_eq!(pool.intern("bar"), Index(2));
-    assert_eq!(pool.intern("foo"), Index(1));
-    assert_eq!(pool.intern("foot"), Index(3));
+    assert_eq!(pool.get(idx::StrPool::new(2)), "bar");
+    assert_eq!(pool.intern("bar"), idx::StrPool::new(2));
+    assert_eq!(pool.intern("foo"), idx::StrPool::new(1));
+    assert_eq!(pool.intern("foot"), idx::StrPool::new(3));
     assert_eq!(pool.data, b"foobarfoot");
   }
 }

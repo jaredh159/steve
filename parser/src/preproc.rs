@@ -1,4 +1,4 @@
-use crate::{diag::Diagnostic, meta::*};
+use crate::internal::*;
 
 pub const fn prelude(_entry: &[u8]) -> Result<Module, Diagnostic> {
   Ok(Module {

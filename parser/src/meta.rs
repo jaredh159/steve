@@ -1,4 +1,4 @@
-use crate::node::DataNode;
+use crate::internal::*;
 
 #[derive(Debug)]
 pub struct Module {

@@ -1,7 +1,4 @@
-use bilge::prelude::*;
-
-use crate::{ast::*, ast_nodes::*, node::*};
-use DataNodeKind::*;
+use crate::internal::{DataNodeKind::*, *};
 
 pub trait IntoNodes {
   fn into_nodes(self, stack: &mut AstNodes, nodes: &mut Vec<Node>);

@@ -1,14 +1,5 @@
-#![allow(unused_imports)]
 #![allow(dead_code)]
-use bilge::prelude::*;
-
-use crate::diag::Diagnostic;
-use crate::into_nodes::IntoNodes;
-use crate::lexer::Lexer;
-use crate::node::{DataNodeKind as N, *};
-use crate::str_pool::StringPool;
-use crate::token::{Token, TokenKind, TokenKind as T};
-use crate::{ast::*, ast_nodes::*};
+use crate::internal::{TokenKind as T, *};
 use ParseError as E;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -400,6 +391,7 @@ const fn precedence(token: Option<Token>) -> Prec {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::node::DataNodeKind as N;
   use pretty_assertions::assert_eq;
 
   #[test]

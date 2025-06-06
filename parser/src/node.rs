@@ -1,5 +1,4 @@
-#![allow(non_camel_case_types)]
-use bilge::prelude::*;
+use crate::internal::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DataNode {

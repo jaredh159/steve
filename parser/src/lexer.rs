@@ -1,5 +1,4 @@
-use crate::str_pool::StringPool;
-use crate::token::{Token, TokenKind, TokenKind as T};
+use crate::internal::{TokenKind as T, *};
 
 #[derive(Debug)]
 pub struct Lexer {

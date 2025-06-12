@@ -37,6 +37,10 @@ macro_rules! index_impl_for {
 pub struct StrPool(u32);
 index_impl_for!(StrPool);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AstNode(u32);
 index_impl_for!(AstNode);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TypeId(u32);
+index_impl_for!(TypeId);

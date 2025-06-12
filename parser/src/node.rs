@@ -61,6 +61,41 @@ pub enum DataNodeKind {
   ImplicitMemberAccess,
 }
 
+impl DataNodeKind {
+  pub const fn is_stmt(&self) -> bool {
+    match self {
+      DataNodeKind::VarDeclStmt { .. } => true,
+      DataNodeKind::ExprStmt => true,
+      DataNodeKind::ReturnStmt => true,
+      DataNodeKind::AsciiLit => false,
+      DataNodeKind::Type { .. } => false,
+      DataNodeKind::IntLit(_) => false,
+      DataNodeKind::FnDecl(_) => false,
+      DataNodeKind::CallExpr { .. } => false,
+      DataNodeKind::MemberAccess { .. } => false,
+      DataNodeKind::PlatformKeyword => false,
+      DataNodeKind::Ident => false,
+      DataNodeKind::ImplicitMemberAccess => false,
+    }
+  }
+  pub const fn is_decl(&self) -> bool {
+    match self {
+      DataNodeKind::FnDecl(_) => true,
+      DataNodeKind::VarDeclStmt { .. } => false,
+      DataNodeKind::ExprStmt => false,
+      DataNodeKind::ReturnStmt => false,
+      DataNodeKind::AsciiLit => false,
+      DataNodeKind::Type { .. } => false,
+      DataNodeKind::IntLit(_) => false,
+      DataNodeKind::CallExpr { .. } => false,
+      DataNodeKind::MemberAccess { .. } => false,
+      DataNodeKind::PlatformKeyword => false,
+      DataNodeKind::Ident => false,
+      DataNodeKind::ImplicitMemberAccess => false,
+    }
+  }
+}
+
 #[bitsize(16)]
 #[derive(FromBits, DebugBits, Clone, Copy, Eq, PartialEq)]
 pub struct IntData {

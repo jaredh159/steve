@@ -2,6 +2,25 @@
 use crate::internal::{TokenKind as T, *};
 use ParseError as E;
 
+#[derive(Debug)]
+pub struct Parser {
+  src: Vec<u8>,
+  strings: StringPool,
+  tokens: Vec<Token>,
+  nodes: Vec<Node>,
+  stack: AstNodes,
+  errors: Vec<ParseError>,
+  pos: usize,
+}
+
+#[derive(Debug)]
+pub struct Parsed {
+  pub src: Vec<u8>,
+  pub strings: StringPool,
+  pub tokens: Vec<Token>,
+  pub result: Result<Vec<Node>, Vec<ParseError>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseError {
   ExpectedToken { kind: TokenKind, found: Token },
@@ -25,25 +44,6 @@ enum Prec {
 
 type PrefixParseFn = fn(&mut Parser) -> Option<Expr>;
 type InfixParseFn = fn(&mut Parser, Expr) -> Option<Expr>;
-
-#[derive(Debug)]
-pub struct Parser {
-  src: Vec<u8>,
-  strings: StringPool,
-  tokens: Vec<Token>,
-  nodes: Vec<Node>,
-  stack: AstNodes,
-  errors: Vec<ParseError>,
-  pos: usize,
-}
-
-#[derive(Debug)]
-pub struct Parsed {
-  pub src: Vec<u8>,
-  pub strings: StringPool,
-  pub tokens: Vec<Token>,
-  pub result: Result<Vec<Node>, Vec<ParseError>>,
-}
 
 impl Parser {
   pub fn new_str(src: &str) -> Self {
@@ -397,11 +397,11 @@ mod tests {
   #[test]
   fn first_goal_program() {
     let input = r#"
-rt main() -> pf.MainReturn {
-  let msg = a"hello steve!";
-  pf.print(msg);
-  .ok(17)
-}"#;
+      rt main() -> pf.MainReturn {
+        let msg = a"hello steve!";
+        pf.print(msg);
+        .err(17)
+      }"#;
     let parser = Parser::new_str(input);
     let nodes = parser.parse().result.unwrap();
     assert_eq!(

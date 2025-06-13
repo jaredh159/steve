@@ -2,7 +2,7 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 
-use std::{collections::BTreeMap, iter::once};
+use std::collections::BTreeMap;
 
 use crate::{
   idx::StrPool,
@@ -10,13 +10,14 @@ use crate::{
 };
 
 pub struct TypeChecker {
-  nodes: Vec<Node>,
+  // nodes: Vec<Node>,
+  ctx: Context,
   pos: usize,
   type_db: Vec<Typ>,
   node_map: BTreeMap<idx::AstNode, TypeId>,
-  strings: StringPool,
-  tokens: Vec<Token>,
-  errors: Vec<TypeMismatch>,
+  // strings: StringPool,
+  // tokens: Vec<Token>,
+  // errors: Vec<TypeMismatch>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,15 +59,16 @@ enum TypeConstraint {
 }
 
 impl TypeChecker {
-  pub const fn new(nodes: Vec<Node>, strings: StringPool, tokens: Vec<Token>) -> Self {
+  pub const fn new(ctx: Context) -> Self {
     TypeChecker {
       pos: 0,
       type_db: vec![],
       node_map: BTreeMap::new(),
-      errors: vec![],
-      nodes,
-      strings,
-      tokens,
+      ctx,
+      // errors: vec![],
+      // nodes,
+      // strings,
+      // tokens,
     }
   }
 
@@ -180,7 +182,7 @@ impl TypeChecker {
         Typ::Concrete(ConcreteType::Primitive(Prim::Bool)),
         Typ::Constraint(TypeConstraint::Numeric),
       ) => {
-        self.errors.push(TypeMismatch {
+        self.ctx.type_mismatches.push(TypeMismatch {
           node: node_idx,
           type_a: a_type.clone(),
           type_b: b_type.clone(),
@@ -192,12 +194,12 @@ impl TypeChecker {
   }
 
   fn cur_ast_node(&self) -> DataNode {
-    self.nodes[self.pos].as_ast()
+    self.ctx.nodes[self.pos].as_ast()
   }
 
   fn visit_ident(&mut self, token: u32) -> TypeId {
-    let token = self.tokens[token as usize];
-    let lexeme = token.lexeme(&self.strings);
+    let token = self.ctx.tokens[token as usize];
+    let lexeme = token.lexeme(&self.ctx.strs);
     self.pos += 1; // move past ident
     match lexeme {
       "bool" => self.concrete(ConcreteType::Primitive(Prim::Bool)),
@@ -214,7 +216,7 @@ impl TypeChecker {
   }
 
   const fn done(&self) -> bool {
-    self.pos >= self.nodes.len() - 1
+    self.pos >= self.ctx.nodes.len() - 1
   }
 
   fn push_type(&mut self, typ: Typ) -> TypeId {
@@ -231,15 +233,15 @@ mod tests {
 
   fn checker_from(input: &str) -> TypeChecker {
     let parser = Parser::new_str(input);
-    let parsed = parser.parse();
-    let nodes = parsed.result.unwrap();
-    dbg!(nodes
-      .clone()
-      .into_iter()
-      .take(5)
-      .map(Node::as_ast)
-      .collect::<Vec<_>>());
-    TypeChecker::new(nodes, parsed.strings, parsed.tokens)
+    let ctx = parser.parse();
+    let nodes = ctx.nodes.clone();
+    // dbg!(nodes
+    //   .clone()
+    //   .into_iter()
+    //   .take(5)
+    //   .map(Node::as_ast)
+    //   .collect::<Vec<_>>());
+    TypeChecker::new(ctx)
   }
 
   #[test]
@@ -247,7 +249,7 @@ mod tests {
     let mut checker = checker_from("fn bad() -> bool { 3 }");
     checker.check();
     assert_eq!(
-      &checker.errors,
+      &checker.ctx.type_mismatches,
       &[TypeMismatch {
         node: idx::AstNode::new(4),
         type_a: Typ::Concrete(ConcreteType::Primitive(Prim::Bool)),

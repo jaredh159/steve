@@ -2,35 +2,25 @@ use crate::internal::{TokenKind as T, *};
 
 #[derive(Debug)]
 pub struct Lexer {
-  pub src: Vec<u8>,
-  strings: StringPool,
+  ctx: Context,
   pos: usize,
 }
 
 impl Lexer {
-  pub fn new(src: Vec<u8>) -> Self {
-    assert!(src.len() <= u32::MAX as usize);
-    Lexer {
-      src,
-      pos: 0,
-      strings: StringPool::new(),
-    }
+  pub const fn new(ctx: Context) -> Self {
+    Lexer { ctx, pos: 0 }
   }
 
-  pub fn new_str(src: &str) -> Self {
-    Self::new(src.bytes().collect())
-  }
-
-  pub fn lex(mut self) -> (Vec<Token>, Vec<u8>, StringPool) {
-    let mut tokens = Vec::with_capacity(64);
+  pub fn lex(mut self) -> Context {
     while !self.eof() {
-      tokens.push(self.next_token());
+      let next = self.next_token();
+      self.ctx.tokens.push(next);
     }
-    (tokens, self.src, self.strings)
+    self.ctx
   }
 
   fn simple_token(&mut self, kind: TokenKind) -> Token {
-    let token = Token::new(kind, self.pos as u32, self.strings.empty());
+    let token = Token::new(kind, self.pos as u32, self.ctx.strs.empty());
     let len = match kind {
       T::Assign
       | T::Semicolon
@@ -51,14 +41,14 @@ impl Lexer {
   }
 
   pub fn next_token(&mut self) -> Token {
-    let len = self.src.len();
-    while !self.eof() && self.src[self.pos].is_ascii_whitespace() {
+    let len = self.ctx.src.len();
+    while !self.eof() && self.ctx.src[self.pos].is_ascii_whitespace() {
       self.pos += 1;
     }
     if self.pos >= len {
       return self.simple_token(T::Eof);
     }
-    match self.src[self.pos] {
+    match self.ctx.src[self.pos] {
       b'{' => self.simple_token(T::LBrace),
       b'}' => self.simple_token(T::RBrace),
       b';' => self.simple_token(T::Semicolon),
@@ -86,11 +76,11 @@ impl Lexer {
     self.pos += 1;
     // TODO: handle newline, eof, errs...
 
-    let span = &self.src[start as usize..self.pos];
+    let span = &self.ctx.src[start as usize..self.pos];
     let token = if let Ok(lexeme) = std::str::from_utf8(span) {
-      Token::new(T::AsciiLit, start, self.strings.intern(lexeme))
+      Token::new(T::AsciiLit, start, self.ctx.strs.intern(lexeme))
     } else {
-      let index = self.strings.sentinel(span.len() as u32);
+      let index = self.ctx.strs.sentinel(span.len() as u32);
       Token::new(T::InvalidUtf8, start, index)
     };
     self.pos += 1; // "
@@ -100,44 +90,44 @@ impl Lexer {
   fn int_lit(&mut self) -> Token {
     let start = self.pos as u32;
     self.pos += 1;
-    while !self.eof() && self.src[self.pos].is_ascii_digit() {
+    while !self.eof() && self.ctx.src[self.pos].is_ascii_digit() {
       self.pos += 1;
     }
-    let span = &self.src[start as usize..self.pos];
+    let span = &self.ctx.src[start as usize..self.pos];
     // SAFETY: we only have ascii digits, so this is fine
     let lexeme = unsafe { std::str::from_utf8_unchecked(span) };
-    let index = self.strings.intern(lexeme);
+    let index = self.ctx.strs.intern(lexeme);
     Token::new(T::IntLit, start, index)
   }
 
   fn ident(&mut self) -> Token {
     let start = self.pos as u32;
     self.pos += 1;
-    while !self.eof() && self.src[self.pos].is_ascii_alphanumeric() {
+    while !self.eof() && self.ctx.src[self.pos].is_ascii_alphanumeric() {
       self.pos += 1;
     }
-    let span = &self.src[start as usize..self.pos];
+    let span = &self.ctx.src[start as usize..self.pos];
     match span {
-      b"let" => Token::new(T::Let, start, self.strings.empty()),
-      b"fn" => Token::new(T::Function, start, self.strings.empty()),
-      b"rt" => Token::new(T::Routine, start, self.strings.empty()),
-      b"pf" => Token::new(T::Pf, start, self.strings.empty()),
+      b"let" => Token::new(T::Let, start, self.ctx.strs.empty()),
+      b"fn" => Token::new(T::Function, start, self.ctx.strs.empty()),
+      b"rt" => Token::new(T::Routine, start, self.ctx.strs.empty()),
+      b"pf" => Token::new(T::Pf, start, self.ctx.strs.empty()),
       _ => {
         let Some(lexeme) = std::str::from_utf8(span).ok() else {
-          let index = self.strings.sentinel(span.len() as u32);
+          let index = self.ctx.strs.sentinel(span.len() as u32);
           return Token::new(T::InvalidUtf8, start, index);
         };
-        Token::new(T::Ident, start, self.strings.intern(lexeme))
+        Token::new(T::Ident, start, self.ctx.strs.intern(lexeme))
       }
     }
   }
 
   fn peek(&self) -> u8 {
-    *self.src.get(self.pos + 1).unwrap_or(&0)
+    *self.ctx.src.get(self.pos + 1).unwrap_or(&0)
   }
 
   const fn eof(&self) -> bool {
-    self.pos >= self.src.len()
+    self.pos >= self.ctx.src.len()
   }
 }
 
@@ -148,7 +138,7 @@ mod tests {
 
   #[test]
   fn single_char_tokens_and_whitespace() {
-    let mut lexer = Lexer::new(b"{ };.(\t)\n=,".to_vec());
+    let mut lexer = Lexer::new(Context::new_str("{ };.(\t)\n=,"));
     let cases: &[(T, u32, &str)] = &[
       (T::LBrace, 0, "{"),
       (T::RBrace, 2, "}"),
@@ -164,13 +154,13 @@ mod tests {
       let token = lexer.next_token();
       assert_eq!(token.kind, *kind);
       assert_eq!(token.offset, *offset);
-      assert_eq!(token.lexeme(&lexer.strings), *lexeme);
+      assert_eq!(token.lexeme(&lexer.ctx.strs), *lexeme);
     }
   }
 
   #[test]
   fn multi_char_tokens() {
-    let mut lexer = Lexer::new(b"let fn foo -> rt pf a\"bar\" 17".to_vec());
+    let mut lexer = Lexer::new(Context::new_str("let fn foo -> rt pf a\"bar\" 17"));
     let cases: &[(T, u32, &str)] = &[
       (T::Let, 0, "let"),
       (T::Function, 4, "fn"),
@@ -186,7 +176,7 @@ mod tests {
       let token = lexer.next_token();
       assert_eq!(token.kind, *kind);
       assert_eq!(token.offset, *offset);
-      assert_eq!(token.lexeme(&lexer.strings), *lexeme);
+      assert_eq!(token.lexeme(&lexer.ctx.strs), *lexeme);
     }
   }
 
@@ -198,7 +188,7 @@ rt main() -> pf.MainReturn {
   pf.print(msg);
   .ok(17)
 }"#;
-    let mut lexer = Lexer::new(input.bytes().collect());
+    let mut lexer = Lexer::new(Context::new_str(input));
     let cases: &[(T, &str)] = &[
       (T::Routine, "rt"),
       (T::Ident, "main"),
@@ -231,7 +221,7 @@ rt main() -> pf.MainReturn {
     for (tkind, lexeme) in cases {
       let token = lexer.next_token();
       assert_eq!(token.kind, *tkind);
-      assert_eq!(token.lexeme(&lexer.strings), *lexeme);
+      assert_eq!(token.lexeme(&lexer.ctx.strs), *lexeme);
     }
   }
 }

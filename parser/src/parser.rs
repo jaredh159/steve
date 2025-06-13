@@ -4,13 +4,9 @@ use ParseError as E;
 
 #[derive(Debug)]
 pub struct Parser {
-  src: Vec<u8>,
-  strings: StringPool,
-  tokens: Vec<Token>,
-  nodes: Vec<Node>,
+  ctx: Context,
   stack: AstNodes,
-  errors: Vec<ParseError>,
-  pos: usize,
+  tok_pos: usize,
 }
 
 #[derive(Debug)]
@@ -46,28 +42,19 @@ type PrefixParseFn = fn(&mut Parser) -> Option<Expr>;
 type InfixParseFn = fn(&mut Parser, Expr) -> Option<Expr>;
 
 impl Parser {
-  pub fn new_str(src: &str) -> Self {
-    let lexer = Lexer::new_str(src);
-    let (tokens, src, strings) = lexer.lex();
-    Self {
-      tokens,
-      src,
-      strings,
-      nodes: Vec::with_capacity(64),
+  pub fn new_str(src: &str) -> Parser {
+    let lexer = Lexer::new(Context::new_str(src));
+    let ctx = lexer.lex();
+    Parser {
+      ctx,
       stack: AstNodes::with_capacity(32),
-      errors: Vec::new(),
-      pos: 0,
+      tok_pos: 0,
     }
   }
 
-  pub fn parse(mut self) -> Parsed {
+  pub fn parse(mut self) -> Context {
     while self.parse_decl() {}
-    Parsed {
-      src: self.src,
-      strings: self.strings,
-      tokens: self.tokens,
-      result: if self.errors.is_empty() { Ok(self.nodes) } else { Err(self.errors) },
-    }
+    self.ctx
   }
 
   fn parse_block_expr(&mut self) {
@@ -76,7 +63,7 @@ impl Parser {
         self.advance();
         break;
       } else if let Some(stmt) = self.parse_stmt() {
-        stmt.into_nodes(&mut self.stack, &mut self.nodes);
+        stmt.into_nodes(&mut self.stack, &mut self.ctx.nodes);
       } else {
         break;
       }
@@ -111,7 +98,10 @@ impl Parser {
     }
 
     let Some(expr) = self.parse_expr(Prec::Lowest) else {
-      self.errors.push(E::ExpectedExpression(self.cur_token()));
+      self
+        .ctx
+        .parse_errors
+        .push(E::ExpectedExpression(self.cur_token()));
       return None;
     };
 
@@ -121,7 +111,7 @@ impl Parser {
   }
 
   fn parse_expr_stmt(&mut self) -> Option<Stmt> {
-    let token = self.pos as u32;
+    let token = self.tok_pos as u32;
     let expr = self.parse_expr(Prec::Lowest)?;
     self.stack.push_expr(expr);
     if self.cur_token_is(T::Semicolon) {
@@ -134,7 +124,10 @@ impl Parser {
 
   fn parse_expr(&mut self, prec: Prec) -> Option<Expr> {
     let Some(mut expr) = self.prefix_parse_fn().and_then(|f| f(self)) else {
-      self.errors.push(E::ExpectedExpression(self.cur_token()));
+      self
+        .ctx
+        .parse_errors
+        .push(E::ExpectedExpression(self.cur_token()));
       return None;
     };
     loop {
@@ -159,12 +152,15 @@ impl Parser {
   }
 
   fn parse_int_lit(&mut self) -> Option<Expr> {
-    let lexeme = self.tokens[self.pos].lexeme(&self.strings);
+    let lexeme = self.ctx.tokens[self.tok_pos].lexeme(&self.ctx.strs);
     // TODO: handle negative numbers, etc...
     let value = match lexeme.parse::<u64>() {
       Ok(value) => value,
       Err(_) => {
-        self.errors.push(E::InvalidIntLit(self.cur_token()));
+        self
+          .ctx
+          .parse_errors
+          .push(E::InvalidIntLit(self.cur_token()));
         0
       }
     };
@@ -180,7 +176,7 @@ impl Parser {
       return false;
     }
 
-    let kind = self.tokens[self.pos].kind;
+    let kind = self.ctx.tokens[self.tok_pos].kind;
     if !matches!(kind, T::Function | T::Routine) {
       return false;
     }
@@ -207,12 +203,15 @@ impl Parser {
       return false;
     };
 
-    let type_token = self.pos;
+    let type_token = self.tok_pos;
     let type_expr = match self.parse_expr(Prec::Lowest) {
       Some(expr @ Expr::MemberAccess { .. }) => expr,
       Some(expr @ Expr::Ident { .. }) => expr,
       _ => {
-        self.errors.push(E::ExpectedType(self.tokens[type_token]));
+        self
+          .ctx
+          .parse_errors
+          .push(E::ExpectedType(self.ctx.tokens[type_token]));
         self.synchronize();
         return false;
       }
@@ -233,7 +232,7 @@ impl Parser {
       discardable: false, // TODO
     };
 
-    fn_decl.into_nodes(&mut self.stack, &mut self.nodes);
+    fn_decl.into_nodes(&mut self.stack, &mut self.ctx.nodes);
     self.parse_block_expr();
     true
   }
@@ -317,43 +316,46 @@ impl Parser {
   }
 
   fn cur_token(&self) -> Token {
-    self.tokens[self.pos]
+    self.ctx.tokens[self.tok_pos]
   }
 
   fn cur_token_is(&self, kind: TokenKind) -> bool {
-    self.tokens[self.pos].kind == kind
+    self.ctx.tokens[self.tok_pos].kind == kind
   }
 
   fn peek_token(&self) -> Option<Token> {
-    self.tokens.get(self.pos + 1).copied()
+    self.ctx.tokens.get(self.tok_pos + 1).copied()
   }
 
   fn peek_token_is(&self, kind: TokenKind) -> bool {
     if self.is_eof() {
       return kind == T::Eof;
     }
-    self.tokens[self.pos + 1].kind == kind
+    self.ctx.tokens[self.tok_pos + 1].kind == kind
   }
 
   const fn is_eof(&self) -> bool {
-    self.pos >= self.tokens.len() - 1
+    self.tok_pos >= self.ctx.tokens.len() - 1
   }
 
   fn consume_expecting(&mut self, kind: TokenKind) -> Option<u32> {
-    let token = self.tokens[self.pos];
+    let token = self.ctx.tokens[self.tok_pos];
     if self.cur_token_is(kind) {
-      let index = self.pos as u32;
-      self.pos += 1;
+      let index = self.tok_pos as u32;
+      self.tok_pos += 1;
       Some(index)
     } else {
-      self.errors.push(E::ExpectedToken { kind, found: token });
+      self
+        .ctx
+        .parse_errors
+        .push(E::ExpectedToken { kind, found: token });
       None
     }
   }
 
   const fn advance(&mut self) -> u32 {
-    let pos = self.pos as u32;
-    self.pos += 1;
+    let pos = self.tok_pos as u32;
+    self.tok_pos += 1;
     pos
   }
 
@@ -403,7 +405,7 @@ mod tests {
         .err(17)
       }"#;
     let parser = Parser::new_str(input);
-    let nodes = parser.parse().result.unwrap();
+    let nodes = parser.parse().nodes;
     assert_eq!(
       &nodes.into_iter().map(Node::as_ast).collect::<Vec<_>>(),
       &[

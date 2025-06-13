@@ -3,7 +3,6 @@ members = ["parser"]
 resolver = "3"
 
 [workspace.lints.clippy]
-missing-const-for-fn = "warn"
 option-map-unit-fn = "allow"
 if-same-then-else = "allow"
 new-without-default = "allow"

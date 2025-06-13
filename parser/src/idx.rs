@@ -33,7 +33,7 @@ macro_rules! index_impl_for {
   };
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Hash, PartialOrd, Ord)]
 pub struct StrPool(u32);
 index_impl_for!(StrPool);
 
@@ -45,6 +45,6 @@ index_impl_for!(AstNode);
 pub struct TypeId(u32);
 index_impl_for!(TypeId);
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Hash, PartialOrd, Ord)]
 pub struct ScopeId(u32);
 index_impl_for!(ScopeId);

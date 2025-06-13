@@ -234,13 +234,13 @@ mod tests {
   fn checker_from(input: &str) -> TypeChecker {
     let parser = Parser::new_str(input);
     let ctx = parser.parse();
-    let nodes = ctx.nodes.clone();
-    // dbg!(nodes
-    //   .clone()
-    //   .into_iter()
-    //   .take(5)
-    //   .map(Node::as_ast)
-    //   .collect::<Vec<_>>());
+    dbg!(ctx
+      .nodes
+      .clone()
+      .into_iter()
+      .take(5)
+      .map(Node::as_ast)
+      .collect::<Vec<_>>());
     TypeChecker::new(ctx)
   }
 

@@ -1,20 +1,21 @@
 #![allow(dead_code)]
 use crate::internal::{TokenKind as T, *};
+use into_mem::IntoAst;
+use mem::{Element, Mem};
+use parse_nodes::*;
+use std::sync::Once;
+use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::{fmt, EnvFilter};
 use ParseError as E;
+
+mod into_mem;
+mod parse_nodes;
 
 #[derive(Debug)]
 pub struct Parser {
   ctx: Context,
-  stack: AstNodes,
+  stack: ParseNodes,
   tok_pos: usize,
-}
-
-#[derive(Debug)]
-pub struct Parsed {
-  pub src: Vec<u8>,
-  pub strings: StringPool,
-  pub tokens: Vec<Token>,
-  pub result: Result<Vec<Node>, Vec<ParseError>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +36,7 @@ enum Prec {
   Prefix,
   Call,
   Index,
-  Dot, // correct ???
+  Dot,
 }
 
 type PrefixParseFn = fn(&mut Parser) -> Option<Expr>;
@@ -43,33 +44,49 @@ type InfixParseFn = fn(&mut Parser, Expr) -> Option<Expr>;
 
 impl Parser {
   pub fn new_str(src: &str) -> Parser {
+    #[cfg(debug_assertions)]
+    configure_test_tracing();
+
     let lexer = Lexer::new(Context::new_str(src));
     let ctx = lexer.lex();
     Parser {
       ctx,
-      stack: AstNodes::with_capacity(32),
+      stack: ParseNodes::with_capacity(32),
       tok_pos: 0,
     }
   }
 
+  #[instrument(skip_all)]
   pub fn parse(mut self) -> Context {
+    trace!("Parser::parse()");
     while self.parse_decl() {}
-    self.ctx
+    self.ctx.reset()
   }
 
-  fn parse_block_expr(&mut self) {
+  #[instrument(skip_all)]
+  fn parse_block_stmts(&mut self, token: u32) {
+    let block_n = self.ctx.ast_data.push(Mem::Fixup, u32::MAX);
+    let next_n = self.ctx.ast_data.push(Mem::Fixup, u32::MAX);
+    let mut num_stmts = 0;
     loop {
       if self.cur_token_is(T::RBrace) {
         self.advance();
         break;
       } else if let Some(stmt) = self.parse_stmt() {
-        stmt.into_nodes(&mut self.stack, &mut self.ctx.nodes);
+        num_stmts += 1;
+        stmt.into_ast(&mut self.stack, &mut self.ctx.ast_data);
       } else {
         break;
       }
     }
+    let block_e = self.ctx.ast_data.get_mut(block_n).unwrap();
+    *block_e = Element::ast(Mem::Block { num_stmts }, token);
+    let next_idx = self.ctx.ast_data.len() as u32;
+    let next_e = self.ctx.ast_data.get_mut(next_n).unwrap();
+    *next_e = Element::idx(idx::AstNode::new(next_idx));
   }
 
+  #[instrument(skip_all)]
   fn parse_stmt(&mut self) -> Option<Stmt> {
     self
       .parse_var_decl_stmt()
@@ -77,11 +94,13 @@ impl Parser {
       .or_else(|| self.parse_return_stmt())
   }
 
-  const fn parse_return_stmt(&mut self) -> Option<Stmt> {
+  #[instrument(skip_all)]
+  fn parse_return_stmt(&mut self) -> Option<Stmt> {
     // remove const
     None
   }
 
+  #[instrument(skip_all)]
   fn parse_var_decl_stmt(&mut self) -> Option<Stmt> {
     if !self.cur_token_is(T::Let) || !self.peek_token_is(T::Ident) {
       return None;
@@ -110,6 +129,7 @@ impl Parser {
     Some(Stmt::Let { token, has_type: false })
   }
 
+  #[instrument(skip_all)]
   fn parse_expr_stmt(&mut self) -> Option<Stmt> {
     let token = self.tok_pos as u32;
     let expr = self.parse_expr(Prec::Lowest)?;
@@ -122,6 +142,7 @@ impl Parser {
     }
   }
 
+  #[instrument(skip_all)]
   fn parse_expr(&mut self, prec: Prec) -> Option<Expr> {
     let Some(mut expr) = self.prefix_parse_fn().and_then(|f| f(self)) else {
       self
@@ -143,14 +164,17 @@ impl Parser {
     Some(expr)
   }
 
-  const fn parse_ascii_lit(&mut self) -> Option<Expr> {
+  #[instrument(skip_all)]
+  fn parse_ascii_lit(&mut self) -> Option<Expr> {
     Some(Expr::AsciiLit { token: self.advance() })
   }
 
-  const fn parse_ident(&mut self) -> Option<Expr> {
+  #[instrument(skip_all)]
+  fn parse_ident(&mut self) -> Option<Expr> {
     Some(Expr::Ident { token: self.advance() })
   }
 
+  #[instrument(skip_all)]
   fn parse_int_lit(&mut self) -> Option<Expr> {
     let lexeme = self.ctx.tokens[self.tok_pos].lexeme(&self.ctx.strs);
     // TODO: handle negative numbers, etc...
@@ -167,10 +191,12 @@ impl Parser {
     Some(Expr::IntLit { value, token: self.advance() })
   }
 
+  #[instrument(skip_all)]
   fn parse_decl(&mut self) -> bool {
     self.parse_fn_decl()
   }
 
+  #[instrument(skip_all)]
   fn parse_fn_decl(&mut self) -> bool {
     if self.is_eof() {
       return false;
@@ -220,7 +246,7 @@ impl Parser {
     self.stack.push_expr(type_expr);
     self.stack.push_expr(Expr::Ident { token: ident_token });
 
-    if self.consume_expecting(T::LBrace).is_none() {
+    let Some(block_token) = self.consume_expecting(T::LBrace) else {
       self.synchronize();
       return false;
     };
@@ -232,11 +258,12 @@ impl Parser {
       discardable: false, // TODO
     };
 
-    fn_decl.into_nodes(&mut self.stack, &mut self.ctx.nodes);
-    self.parse_block_expr();
+    fn_decl.into_ast(&mut self.stack, &mut self.ctx.ast_data);
+    self.parse_block_stmts(block_token);
     true
   }
 
+  #[instrument(skip_all)]
   fn parse_implicit_member_access(&mut self) -> Option<Expr> {
     let dot_token = self.advance(); // `.`
     let Some(ident_token) = self.consume_expecting(T::Ident) else {
@@ -247,10 +274,12 @@ impl Parser {
     Some(Expr::MemberAccess { token: dot_token, implicit: true })
   }
 
-  const fn parse_platform_keyword(&mut self) -> Option<Expr> {
+  #[instrument(skip_all)]
+  fn parse_platform_keyword(&mut self) -> Option<Expr> {
     Some(Expr::PlatformKeyword { token: self.advance() })
   }
 
+  #[instrument(skip_all)]
   fn parse_infix_member_access(&mut self, lhs: Expr) -> Option<Expr> {
     let dot_token = self.advance(); // `.`
     let Some(ident_token) = self.consume_expecting(T::Ident) else {
@@ -262,14 +291,16 @@ impl Parser {
     Some(Expr::MemberAccess { token: dot_token, implicit: false })
   }
 
+  #[instrument(skip_all)]
   fn parse_call_expression(&mut self, lhs: Expr) -> Option<Expr> {
     let token = self.advance(); // `(`
     self.stack.push_expr(lhs);
     let num_args = self.parse_expr_list(T::RParen);
-    let expr = Expr::CallExpr { token, num_args };
+    let expr = Expr::Call { token, num_args };
     Some(expr)
   }
 
+  #[instrument(skip_all)]
   fn parse_expr_list(&mut self, end: TokenKind) -> u8 {
     let mut count: u8 = 0;
     if self.cur_token_is(end) {
@@ -334,7 +365,7 @@ impl Parser {
     self.ctx.tokens[self.tok_pos + 1].kind == kind
   }
 
-  const fn is_eof(&self) -> bool {
+  fn is_eof(&self) -> bool {
     self.tok_pos >= self.ctx.tokens.len() - 1
   }
 
@@ -353,7 +384,7 @@ impl Parser {
     }
   }
 
-  const fn advance(&mut self) -> u32 {
+  fn advance(&mut self) -> u32 {
     let pos = self.tok_pos as u32;
     self.tok_pos += 1;
     pos
@@ -364,7 +395,7 @@ impl Parser {
   }
 }
 
-const fn precedence(token: Option<Token>) -> Prec {
+fn precedence(token: Option<Token>) -> Prec {
   let Some(token) = token else {
     return Prec::Lowest;
   };
@@ -390,14 +421,33 @@ const fn precedence(token: Option<Token>) -> Prec {
   }
 }
 
+#[cfg(debug_assertions)]
+static INIT: Once = Once::new();
+
+#[cfg(debug_assertions)]
+fn configure_test_tracing() {
+  INIT.call_once(|| {
+    let subscriber = fmt::Subscriber::builder()
+      .with_env_filter(EnvFilter::from_default_env())
+      .with_test_writer()
+      .with_span_events(FmtSpan::ACTIVE)
+      .finish();
+    tracing::subscriber::set_global_default(subscriber)
+      .expect("setting default tracing subscriber failed");
+  });
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::node::DataNodeKind as N;
+  use crate::ast::mem::*;
   use pretty_assertions::assert_eq;
+  use Dissembled as D;
+  use Mem::*;
+  use TokenNode as TN;
 
   #[test]
-  fn first_goal_program() {
+  fn parse_first_goal_program() {
     let input = r#"
       rt main() -> pf.MainReturn {
         let msg = a"hello steve!";
@@ -405,29 +455,49 @@ mod tests {
         .err(17)
       }"#;
     let parser = Parser::new_str(input);
-    let nodes = parser.parse().nodes;
+    let dissembled = parser.parse().ast_data.dissemble();
     assert_eq!(
-      &nodes.into_iter().map(Node::as_ast).collect::<Vec<_>>(),
+      &dissembled,
       &[
-        DataNode::new(N::FnDecl(FnDeclData::new(0, false, false)), 0),
-        DataNode::new(N::Ident, 1),                            // "main"
-        DataNode::new(N::MemberAccess { implicit: false }, 6), // type expr
-        DataNode::new(N::PlatformKeyword, 5),                  // "pf"
-        DataNode::new(N::Ident, 7),                            // "MainReturn"
-        DataNode::new(N::VarDeclStmt { has_type: false }, 9),
-        DataNode::new(N::Ident, 10), // "msg"
-        DataNode::new(N::AsciiLit, 12),
-        DataNode::new(N::ExprStmt, 14),
-        DataNode::new(N::CallExpr { num_args: 1 }, 17),
-        DataNode::new(N::Ident, 18),
-        DataNode::new(N::MemberAccess { implicit: false }, 15),
-        DataNode::new(N::PlatformKeyword, 14), // "pf"
-        DataNode::new(N::Ident, 16),           // "print"
-        DataNode::new(N::ReturnStmt, 21),
-        DataNode::new(N::CallExpr { num_args: 1 }, 23),
-        DataNode::new(N::IntLit(IntData::new(u2::new(0), u14::new(17))), 24),
-        DataNode::new(N::MemberAccess { implicit: true }, 21),
-        DataNode::new(N::Ident, 22),
+        D::Node(TN::new(FnDecl(FnDeclData::new(0, false, false)), 0)),
+        D::Node(TN::new(Ident, 1)), // "main"
+        D::Node(TN::new(Mem::MemberAccess { implicit: false }, 6)), // type expr
+        D::Node(TN::new(PlatformKeyword, 5)), // "pf"
+        D::Node(TN::new(Ident, 7)), // "MainReturn"
+        D::Node(TN::new(Block { num_stmts: 3 }, 8)),
+        D::Idx(idx::AstNode::new(21)), // node after the block stmt
+        D::Node(TN::new(VarDeclStmt { has_type: false }, 9)),
+        D::Node(TN::new(Ident, 10)), // "msg"
+        D::Node(TN::new(AsciiLit, 12)),
+        D::Node(TN::new(ExprStmt, 14)),
+        D::Node(TN::new(CallExpr { num_args: 1 }, 17)),
+        D::Node(TN::new(Ident, 18)),
+        D::Node(TN::new(Mem::MemberAccess { implicit: false }, 15)),
+        D::Node(TN::new(PlatformKeyword, 14)), // "pf"
+        D::Node(TN::new(Ident, 16)),           // "print"
+        D::Node(TN::new(ReturnStmt, 21)),
+        D::Node(TN::new(CallExpr { num_args: 1 }, 23)),
+        D::Node(TN::new(IntLit(IntData::new(u2::new(0), u14::new(17))), 24)),
+        D::Node(TN::new(Mem::MemberAccess { implicit: true }, 21)),
+        D::Node(TN::new(Ident, 22)),
+      ]
+    );
+  }
+
+  #[test]
+  fn parse_fn_return_mismatch() {
+    let parser = Parser::new_str("fn bad() -> bool { 3 }");
+    let dissembled = parser.parse().ast_data.dissemble();
+    assert_eq!(
+      &dissembled,
+      &[
+        D::Node(TN::new(FnDecl(FnDeclData::new(0, true, false)), 0)),
+        D::Node(TN::new(Ident, 1)), // "bad"
+        D::Node(TN::new(Ident, 5)), // "bool"
+        D::Node(TN::new(Block { num_stmts: 1 }, 6)),
+        D::Idx(idx::AstNode::new(7)), // node after the block stmt
+        D::Node(TN::new(ReturnStmt, 7)),
+        D::Node(TN::new(IntLit(IntData::new(u2::new(0), u14::new(3))), 7)),
       ]
     );
   }

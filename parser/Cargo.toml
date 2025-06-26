@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 bilge = "0.2.0"
+tracing = { version = "0.1", features = ["release_max_level_off"] }
+tracing-subscriber = {version ="0.3", features = ["env-filter", "std"]}
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

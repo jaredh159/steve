@@ -21,8 +21,23 @@ macro_rules! index_impl_for {
         self.0 as usize
       }
 
+      pub const fn u32(&self) -> u32 {
+        self.0
+      }
+
       pub const fn decr(&self) -> Self {
         Self(self.0 - 1)
+      }
+    }
+    impl std::ops::Add<u32> for $type {
+      type Output = Self;
+      fn add(self, other: u32) -> Self {
+        Self(self.0 + other)
+      }
+    }
+    impl std::ops::AddAssign<u32> for $type {
+      fn add_assign(&mut self, other: u32) {
+        self.0 += other;
       }
     }
     impl std::fmt::Debug for $type {

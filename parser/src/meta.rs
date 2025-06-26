@@ -1,5 +1,3 @@
-use crate::internal::*;
-
 #[derive(Debug)]
 pub struct Module {
   pub kind: ModuleKind,
@@ -15,7 +13,7 @@ pub struct PlatformSpec {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ModuleKind {
-  Bin(Vec<DataNode>),
+  Bin, //(Vec<Node>),
   Lib, // export map of some sort
 }
 

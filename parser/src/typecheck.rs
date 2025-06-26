@@ -10,14 +10,9 @@ use crate::{
 };
 
 pub struct TypeChecker {
-  // nodes: Vec<Node>,
   ctx: Context,
-  pos: usize,
   type_db: Vec<Typ>,
   node_map: BTreeMap<idx::AstNode, TypeId>,
-  // strings: StringPool,
-  // tokens: Vec<Token>,
-  // errors: Vec<TypeMismatch>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,66 +56,54 @@ enum TypeConstraint {
 impl TypeChecker {
   pub const fn new(ctx: Context) -> Self {
     TypeChecker {
-      pos: 0,
       type_db: vec![],
       node_map: BTreeMap::new(),
       ctx,
-      // errors: vec![],
-      // nodes,
-      // strings,
-      // tokens,
     }
   }
 
+  #[instrument(skip_all)]
   pub fn check(&mut self) {
     self.push_type(Typ::Concrete(ConcreteType::Primitive(Prim::Void)));
-    while self.cur_ast_node().kind.is_decl() {
-      self.visit_cur_node();
+    let mut idx = idx::AstNode::new(0);
+    while let Some(node) = self.ctx.ast_node_at(idx) {
+      self.visit_node(&node);
+      if let Some(next_idx) = self.ctx.ast_index_after(node.index()) {
+        idx = next_idx;
+      } else {
+        break;
+      }
     }
   }
 
-  fn visit_cur_node(&mut self) -> TypeId {
-    let node = self.cur_ast_node();
-    match node.kind {
-      DataNodeKind::FnDecl(data) => self.visit_fn_decl(data),
-      DataNodeKind::Ident => self.visit_ident(node.token),
-      DataNodeKind::ReturnStmt => self.visit_ret_stmt(),
-      DataNodeKind::IntLit(int_data) => self.visit_int_lit(),
-      DataNodeKind::VarDeclStmt { has_type } => self.visit_var_decl(has_type),
-      DataNodeKind::AsciiLit => todo!(),
-      DataNodeKind::Type { num_tokens } => todo!(),
-      DataNodeKind::ExprStmt => todo!(),
-      DataNodeKind::CallExpr { num_args } => todo!(),
-      DataNodeKind::MemberAccess { implicit } => self.visit_member_access(implicit),
-      DataNodeKind::PlatformKeyword => todo!(),
-      DataNodeKind::ImplicitMemberAccess => todo!(),
+  #[instrument(skip_all)]
+  fn visit_node(&mut self, node: &Node) -> TypeId {
+    match node {
+      Node::FnDecl(fn_decl) => self.visit_fn_decl(fn_decl),
+      Node::Ident(ident) => self.visit_ident(ident),
+      Node::BlockStmt(block) => todo!(),
+      Node::ReturnStmt(ret_stmt) => self.visit_ret_stmt(ret_stmt),
+      Node::IntLit(int_lit) => self.visit_int_lit(int_lit),
+      Node::MemberAccess(member_access) => self.visit_member_access(member_access),
     }
   }
 
-  fn visit_next_node(&mut self) -> TypeId {
-    self.pos += 1;
-    self.visit_cur_node()
+  #[instrument(skip_all)]
+  fn visit_ret_stmt(&mut self, ret_stmt: &ReturnStmt) -> TypeId {
+    let next_node = self.ctx.ast_node_after(ret_stmt.idx).unwrap();
+    let type_id = self.visit_node(&next_node);
+    self.insert_node(ret_stmt.idx, type_id)
   }
 
-  fn visit_ret_stmt(&mut self) -> TypeId {
-    let node_idx = self.node_idx();
-    let type_id = self.visit_next_node();
-    self.insert_node(node_idx, type_id)
-  }
-
-  fn visit_int_lit(&mut self) -> TypeId {
-    let node_idx = self.node_idx();
+  #[instrument(skip_all)]
+  fn visit_int_lit(&mut self, int_lit: &IntLit) -> TypeId {
     let type_id = self.push_type(Typ::Constraint(TypeConstraint::Numeric));
-    self.insert_node(node_idx, type_id)
+    self.insert_node(int_lit.idx, type_id)
   }
 
   fn insert_node(&mut self, node_idx: idx::AstNode, type_id: TypeId) -> TypeId {
     self.node_map.insert(node_idx, type_id);
     type_id
-  }
-
-  const fn node_idx(&self) -> idx::AstNode {
-    idx::AstNode::new(self.pos as u32)
   }
 
   fn resolve_links_and_compress(&mut self, type_id: TypeId) -> TypeId {
@@ -141,32 +124,23 @@ impl TypeChecker {
     final_type_id
   }
 
-  fn visit_fn_decl(&mut self, data: FnDeclData) -> TypeId {
-    let fn_node_idx = self.node_idx();
-    self.pos += 2; // skip fn decl, ident
-    let return_annotation = self.visit_cur_node();
-    dbg!(self.pos);
+  #[instrument(skip_all)]
+  fn visit_fn_decl(&mut self, fn_decl: &FnDecl) -> TypeId {
+    let return_annotation = fn_decl.return_annotation(&self.ctx);
+    let return_annotation = self.visit_node(&return_annotation);
     let mut return_type = TypeId::new(0); // void
-    while self.cur_ast_node().kind.is_stmt() {
-      return_type = self.visit_cur_node();
+    let mut err_loc = fn_decl.idx;
+    let mut stmts = fn_decl.statements(&self.ctx);
+    while let Some(stmt) = stmts.next(&self.ctx) {
+      err_loc = stmt.index();
+      return_type = self.visit_node(&stmt);
     }
-    self.unify(return_annotation, return_type, self.node_idx());
+    self.unify(return_annotation, return_type, err_loc);
     let type_id = self.push_type(Typ::Concrete(ConcreteType::Function {
       args: vec![],
       ret: return_annotation,
     }));
-    self.insert_node(fn_node_idx, type_id)
-  }
-
-  fn visit_member_access(&mut self, implicit: bool) -> TypeId {
-    let ok_id = self.push_type(Typ::Concrete(ConcreteType::Primitive(Prim::Void)));
-    let err_id = self.push_type(Typ::Concrete(ConcreteType::Primitive(Prim::Int {
-      signed: false,
-      bits: 3,
-    })));
-    self.pos += 3;
-    // TODO: hardcoding this as `pf.MainReturn` for now
-    self.push_type(Typ::Concrete(ConcreteType::Result(ok_id, err_id)))
+    self.insert_node(fn_decl.idx, type_id)
   }
 
   fn unify(&mut self, a: TypeId, b: TypeId, node_idx: idx::AstNode) -> bool {
@@ -193,30 +167,32 @@ impl TypeChecker {
     }
   }
 
-  fn cur_ast_node(&self) -> DataNode {
-    self.ctx.nodes[self.pos].as_ast()
-  }
-
-  fn visit_ident(&mut self, token: u32) -> TypeId {
-    let token = self.ctx.tokens[token as usize];
-    let lexeme = token.lexeme(&self.ctx.strs);
-    self.pos += 1; // move past ident
-    match lexeme {
+  #[instrument(skip_all)]
+  fn visit_ident(&mut self, ident: &Ident) -> TypeId {
+    match ident.lexeme(&self.ctx) {
       "bool" => self.concrete(ConcreteType::Primitive(Prim::Bool)),
       _ => todo!("other idents!"),
     }
   }
 
+  #[instrument(skip_all)]
+  fn visit_member_access(&mut self, member_access: &MemberAccess) -> TypeId {
+    // TODO: hardcoding this as `pf.MainReturn` for now
+    let ok_id = self.push_type(Typ::Concrete(ConcreteType::Primitive(Prim::Void)));
+    let err_id = self.push_type(Typ::Concrete(ConcreteType::Primitive(Prim::Int {
+      signed: false,
+      bits: 3,
+    })));
+    self.push_type(Typ::Concrete(ConcreteType::Result(ok_id, err_id)))
+  }
+
+  #[instrument(skip_all)]
   fn visit_var_decl(&mut self, has_type: bool) -> TypeId {
     todo!()
   }
 
   fn concrete(&mut self, concrete: ConcreteType) -> TypeId {
     self.push_type(Typ::Concrete(concrete))
-  }
-
-  const fn done(&self) -> bool {
-    self.pos >= self.ctx.nodes.len() - 1
   }
 
   fn push_type(&mut self, typ: Typ) -> TypeId {
@@ -234,24 +210,17 @@ mod tests {
   fn checker_from(input: &str) -> TypeChecker {
     let parser = Parser::new_str(input);
     let ctx = parser.parse();
-    dbg!(ctx
-      .nodes
-      .clone()
-      .into_iter()
-      .take(5)
-      .map(Node::as_ast)
-      .collect::<Vec<_>>());
     TypeChecker::new(ctx)
   }
 
   #[test]
-  fn fn_return_mismatch() {
+  fn typecheck_fn_return_mismatch() {
     let mut checker = checker_from("fn bad() -> bool { 3 }");
     checker.check();
     assert_eq!(
       &checker.ctx.type_mismatches,
       &[TypeMismatch {
-        node: idx::AstNode::new(4),
+        node: idx::AstNode::new(5),
         type_a: Typ::Concrete(ConcreteType::Primitive(Prim::Bool)),
         type_b: Typ::Constraint(TypeConstraint::Numeric),
       }]

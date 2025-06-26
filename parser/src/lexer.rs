@@ -16,7 +16,7 @@ impl Lexer {
       let next = self.next_token();
       self.ctx.tokens.push(next);
     }
-    self.ctx
+    self.ctx.reset()
   }
 
   fn simple_token(&mut self, kind: TokenKind) -> Token {

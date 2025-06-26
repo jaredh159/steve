@@ -79,12 +79,12 @@ impl TypeChecker {
   #[instrument(skip_all)]
   fn visit_node(&mut self, node: &Node) -> TypeId {
     match node {
-      Node::FnDecl(fn_decl) => self.visit_fn_decl(fn_decl),
-      Node::Ident(ident) => self.visit_ident(ident),
-      Node::BlockStmt(block) => todo!(),
-      Node::ReturnStmt(ret_stmt) => self.visit_ret_stmt(ret_stmt),
-      Node::IntLit(int_lit) => self.visit_int_lit(int_lit),
-      Node::MemberAccess(member_access) => self.visit_member_access(member_access),
+      Node::Decl(Decl::Fn(fn_decl)) => self.visit_fn_decl(fn_decl),
+      Node::Expr(Expr::Ident(ident)) => self.visit_ident(ident),
+      Node::Stmt(Stmt::Block(block)) => todo!(),
+      Node::Stmt(Stmt::Return(ret_stmt)) => self.visit_ret_stmt(ret_stmt),
+      Node::Expr(Expr::IntLit(int_lit)) => self.visit_int_lit(int_lit),
+      Node::Expr(Expr::MemberAccess(member_access)) => self.visit_member_access(member_access),
     }
   }
 

@@ -1,7 +1,3 @@
-#![allow(dead_code)]
-#![allow(unused_variables)]
-#![allow(unused_imports)]
-
 use std::collections::BTreeMap;
 
 use crate::internal::*;
@@ -19,6 +15,16 @@ impl Resolver {
 
   pub fn resolve(mut self) -> Context {
     self.ctx.scopes.push(Scope::global());
+    let mut idx = idx::AstNode::new(0);
+    while let Some(node) = self.ctx.ast_node_at(idx) {
+      // self.visit_node(&node);
+      if let Some(next_idx) = self.ctx.ast_index_after(node.index()) {
+        idx = next_idx;
+      } else {
+        break;
+      }
+    }
+
     // while let Some(ast_node) = self.ctx.nodes.next_node() {
     //   match ast_node {
     //     AstNode::Declaration(Decl::Function {

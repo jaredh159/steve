@@ -1,4 +1,4 @@
-use crate::internal::*;
+use crate::idx;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Decl {

@@ -6,23 +6,62 @@ use crate::internal::*;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Node {
-  FnDecl(FnDecl),
+  Decl(Decl),
+  Expr(Expr),
+  Stmt(Stmt),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Decl {
+  Fn(FnDecl),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Expr {
   Ident(Ident),
-  BlockStmt(BlockStmt),
-  ReturnStmt(ReturnStmt),
   IntLit(IntLit),
   MemberAccess(MemberAccess),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Stmt {
+  Block(BlockStmt),
+  Return(ReturnStmt),
+}
+
+impl Decl {
+  pub fn index(&self) -> idx::AstNode {
+    match self {
+      Decl::Fn(fn_decl) => fn_decl.idx,
+    }
+  }
+}
+
+impl Stmt {
+  pub fn index(&self) -> idx::AstNode {
+    match self {
+      Stmt::Block(block_stmt) => block_stmt.idx,
+      Stmt::Return(return_stmt) => return_stmt.idx,
+    }
+  }
+}
+
+impl Expr {
+  pub fn index(&self) -> idx::AstNode {
+    match self {
+      Expr::Ident(ident) => ident.idx,
+      Expr::IntLit(int_lit) => int_lit.idx,
+      Expr::MemberAccess(member_access) => member_access.idx,
+    }
+  }
 }
 
 impl Node {
   pub fn index(&self) -> idx::AstNode {
     match self {
-      Node::FnDecl(fn_decl) => fn_decl.idx,
-      Node::Ident(ident) => ident.idx,
-      Node::BlockStmt(block_stmt) => block_stmt.idx,
-      Node::ReturnStmt(return_stmt) => return_stmt.idx,
-      Node::IntLit(int_lit) => int_lit.idx,
-      Node::MemberAccess(member_access) => member_access.idx,
+      Node::Decl(decl) => decl.index(),
+      Node::Expr(expr) => expr.index(),
+      Node::Stmt(stmt) => stmt.index(),
     }
   }
 }
@@ -68,7 +107,7 @@ impl FnDecl {
     // TODO: skip arguments when present
     let ret_annot_idx = self.idx + 2;
     let block_node = ctx.ast_node_after(ret_annot_idx).unwrap();
-    let Node::BlockStmt(block_stmt) = block_node else {
+    let Node::Stmt(Stmt::Block(block_stmt)) = block_node else {
       panic!("invalid ast mem data, expected BlockStmt");
     };
 

@@ -80,26 +80,28 @@ impl AstData {
     }
     let selected = self.elems[idx.usize()].as_ast();
     let node = match selected.node {
-      Mem::FnDecl(data) => Node::FnDecl(FnDecl {
+      Mem::FnDecl(data) => Node::Decl(Decl::Fn(FnDecl {
         num_args: data.num_args(),
         is_pure: data.is_pure(),
         discardable: data.discardable(),
         idx,
-      }),
-      Mem::Ident => Node::Ident(Ident { token: selected.token, idx }),
+      })),
+      Mem::Ident => Node::Expr(Expr::Ident(Ident { token: selected.token, idx })),
       Mem::VarDeclStmt { has_type } => todo!(),
       Mem::AsciiLit => todo!(),
-      Mem::IntLit(int_data) => Node::IntLit(IntLit {
+      Mem::IntLit(int_data) => Node::Expr(Expr::IntLit(IntLit {
         value: u64::from(int_data.payload()),
         idx,
-      }),
-      Mem::Block { num_stmts: 0 } => Node::BlockStmt(BlockStmt { num_stmts: 0, idx }),
-      Mem::Block { num_stmts } => Node::BlockStmt(BlockStmt { num_stmts, idx }),
+      })),
+      Mem::Block { num_stmts: 0 } => Node::Stmt(Stmt::Block(BlockStmt { num_stmts: 0, idx })),
+      Mem::Block { num_stmts } => Node::Stmt(Stmt::Block(BlockStmt { num_stmts, idx })),
       Mem::ExprStmt => todo!(),
       Mem::CallExpr { num_args } => todo!(),
-      Mem::MemberAccess { implicit } => Node::MemberAccess(MemberAccess { implicit, idx }),
+      Mem::MemberAccess { implicit } => {
+        Node::Expr(Expr::MemberAccess(MemberAccess { implicit, idx }))
+      }
       Mem::PlatformKeyword => todo!(),
-      Mem::ReturnStmt => Node::ReturnStmt(ReturnStmt { idx }),
+      Mem::ReturnStmt => Node::Stmt(Stmt::Return(ReturnStmt { idx })),
       Mem::Fixup => panic!(),
     };
     Some(node)

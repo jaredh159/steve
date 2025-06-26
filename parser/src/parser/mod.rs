@@ -2,7 +2,7 @@
 use crate::internal::{TokenKind as T, *};
 use into_mem::IntoAst;
 use mem::{Element, Mem};
-use parse_nodes::*;
+use parse_nodes::{self as parse, ParseNodes};
 use std::sync::Once;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::{fmt, EnvFilter};
@@ -39,8 +39,8 @@ enum Prec {
   Dot,
 }
 
-type PrefixParseFn = fn(&mut Parser) -> Option<Expr>;
-type InfixParseFn = fn(&mut Parser, Expr) -> Option<Expr>;
+type PrefixParseFn = fn(&mut Parser) -> Option<parse::Expr>;
+type InfixParseFn = fn(&mut Parser, parse::Expr) -> Option<parse::Expr>;
 
 impl Parser {
   pub fn new_str(src: &str) -> Parser {
@@ -87,7 +87,7 @@ impl Parser {
   }
 
   #[instrument(skip_all)]
-  fn parse_stmt(&mut self) -> Option<Stmt> {
+  fn parse_stmt(&mut self) -> Option<parse::Stmt> {
     self
       .parse_var_decl_stmt()
       .or_else(|| self.parse_expr_stmt())
@@ -95,18 +95,18 @@ impl Parser {
   }
 
   #[instrument(skip_all)]
-  fn parse_return_stmt(&mut self) -> Option<Stmt> {
+  fn parse_return_stmt(&mut self) -> Option<parse::Stmt> {
     // remove const
     None
   }
 
   #[instrument(skip_all)]
-  fn parse_var_decl_stmt(&mut self) -> Option<Stmt> {
+  fn parse_var_decl_stmt(&mut self) -> Option<parse::Stmt> {
     if !self.cur_token_is(T::Let) || !self.peek_token_is(T::Ident) {
       return None;
     }
     let token = self.advance();
-    let ident = Expr::Ident { token: self.advance() };
+    let ident = parse::Expr::Ident { token: self.advance() };
     self.stack.push_expr(ident);
 
     // TODO: parse opt. type annotation, setting decl node if present
@@ -126,24 +126,24 @@ impl Parser {
 
     self.consume_expecting(T::Semicolon);
     self.stack.push_expr(expr);
-    Some(Stmt::Let { token, has_type: false })
+    Some(parse::Stmt::Let { token, has_type: false })
   }
 
   #[instrument(skip_all)]
-  fn parse_expr_stmt(&mut self) -> Option<Stmt> {
+  fn parse_expr_stmt(&mut self) -> Option<parse::Stmt> {
     let token = self.tok_pos as u32;
     let expr = self.parse_expr(Prec::Lowest)?;
     self.stack.push_expr(expr);
     if self.cur_token_is(T::Semicolon) {
       self.advance();
-      Some(Stmt::Expression { token })
+      Some(parse::Stmt::Expression { token })
     } else {
-      Some(Stmt::Return { token })
+      Some(parse::Stmt::Return { token })
     }
   }
 
   #[instrument(skip_all)]
-  fn parse_expr(&mut self, prec: Prec) -> Option<Expr> {
+  fn parse_expr(&mut self, prec: Prec) -> Option<parse::Expr> {
     let Some(mut expr) = self.prefix_parse_fn().and_then(|f| f(self)) else {
       self
         .ctx
@@ -165,17 +165,17 @@ impl Parser {
   }
 
   #[instrument(skip_all)]
-  fn parse_ascii_lit(&mut self) -> Option<Expr> {
-    Some(Expr::AsciiLit { token: self.advance() })
+  fn parse_ascii_lit(&mut self) -> Option<parse::Expr> {
+    Some(parse::Expr::AsciiLit { token: self.advance() })
   }
 
   #[instrument(skip_all)]
-  fn parse_ident(&mut self) -> Option<Expr> {
-    Some(Expr::Ident { token: self.advance() })
+  fn parse_ident(&mut self) -> Option<parse::Expr> {
+    Some(parse::Expr::Ident { token: self.advance() })
   }
 
   #[instrument(skip_all)]
-  fn parse_int_lit(&mut self) -> Option<Expr> {
+  fn parse_int_lit(&mut self) -> Option<parse::Expr> {
     let lexeme = self.ctx.tokens[self.tok_pos].lexeme(&self.ctx.strs);
     // TODO: handle negative numbers, etc...
     let value = match lexeme.parse::<u64>() {
@@ -188,7 +188,7 @@ impl Parser {
         0
       }
     };
-    Some(Expr::IntLit { value, token: self.advance() })
+    Some(parse::Expr::IntLit { value, token: self.advance() })
   }
 
   #[instrument(skip_all)]
@@ -231,8 +231,8 @@ impl Parser {
 
     let type_token = self.tok_pos;
     let type_expr = match self.parse_expr(Prec::Lowest) {
-      Some(expr @ Expr::MemberAccess { .. }) => expr,
-      Some(expr @ Expr::Ident { .. }) => expr,
+      Some(expr @ parse::Expr::MemberAccess { .. }) => expr,
+      Some(expr @ parse::Expr::Ident { .. }) => expr,
       _ => {
         self
           .ctx
@@ -244,14 +244,16 @@ impl Parser {
     };
 
     self.stack.push_expr(type_expr);
-    self.stack.push_expr(Expr::Ident { token: ident_token });
+    self
+      .stack
+      .push_expr(parse::Expr::Ident { token: ident_token });
 
     let Some(block_token) = self.consume_expecting(T::LBrace) else {
       self.synchronize();
       return false;
     };
 
-    let fn_decl = Decl::Function {
+    let fn_decl = parse::Decl::Function {
       num_args,
       token: fn_token,
       is_pure: kind == T::Function,
@@ -264,39 +266,43 @@ impl Parser {
   }
 
   #[instrument(skip_all)]
-  fn parse_implicit_member_access(&mut self) -> Option<Expr> {
+  fn parse_implicit_member_access(&mut self) -> Option<parse::Expr> {
     let dot_token = self.advance(); // `.`
     let Some(ident_token) = self.consume_expecting(T::Ident) else {
       self.synchronize();
       return None;
     };
-    self.stack.push_expr(Expr::Ident { token: ident_token });
-    Some(Expr::MemberAccess { token: dot_token, implicit: true })
+    self
+      .stack
+      .push_expr(parse::Expr::Ident { token: ident_token });
+    Some(parse::Expr::MemberAccess { token: dot_token, implicit: true })
   }
 
   #[instrument(skip_all)]
-  fn parse_platform_keyword(&mut self) -> Option<Expr> {
-    Some(Expr::PlatformKeyword { token: self.advance() })
+  fn parse_platform_keyword(&mut self) -> Option<parse::Expr> {
+    Some(parse::Expr::PlatformKeyword { token: self.advance() })
   }
 
   #[instrument(skip_all)]
-  fn parse_infix_member_access(&mut self, lhs: Expr) -> Option<Expr> {
+  fn parse_infix_member_access(&mut self, lhs: parse::Expr) -> Option<parse::Expr> {
     let dot_token = self.advance(); // `.`
     let Some(ident_token) = self.consume_expecting(T::Ident) else {
       self.synchronize();
       return None;
     };
     self.stack.push_expr(lhs);
-    self.stack.push_expr(Expr::Ident { token: ident_token });
-    Some(Expr::MemberAccess { token: dot_token, implicit: false })
+    self
+      .stack
+      .push_expr(parse::Expr::Ident { token: ident_token });
+    Some(parse::Expr::MemberAccess { token: dot_token, implicit: false })
   }
 
   #[instrument(skip_all)]
-  fn parse_call_expression(&mut self, lhs: Expr) -> Option<Expr> {
+  fn parse_call_expression(&mut self, lhs: parse::Expr) -> Option<parse::Expr> {
     let token = self.advance(); // `(`
     self.stack.push_expr(lhs);
     let num_args = self.parse_expr_list(T::RParen);
-    let expr = Expr::Call { token, num_args };
+    let expr = parse::Expr::Call { token, num_args };
     Some(expr)
   }
 

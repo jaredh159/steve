@@ -477,7 +477,7 @@ mod tests {
         D::Node(TN::new(AsciiLit, 12)),
         D::Node(TN::new(ExprStmt, 14)),
         D::Node(TN::new(CallExpr { num_args: 1 }, 17)),
-        D::Node(TN::new(Ident, 18)),
+        D::Node(TN::new(Ident, 18)), // first arg `msg`
         D::Node(TN::new(Mem::MemberAccess { implicit: false }, 15)),
         D::Node(TN::new(PlatformKeyword, 14)), // "pf"
         D::Node(TN::new(Ident, 16)),           // "print"

@@ -14,6 +14,7 @@ pub enum Node {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Decl {
   Fn(FnDecl),
+  Var(VarDecl),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -27,12 +28,14 @@ pub enum Expr {
 pub enum Stmt {
   Block(BlockStmt),
   Return(ReturnStmt),
+  Expr(ExprStmt),
 }
 
 impl Decl {
   pub fn index(&self) -> idx::AstNode {
     match self {
       Decl::Fn(fn_decl) => fn_decl.idx,
+      Decl::Var(var_decl) => var_decl.idx,
     }
   }
 }
@@ -42,6 +45,7 @@ impl Stmt {
     match self {
       Stmt::Block(block_stmt) => block_stmt.idx,
       Stmt::Return(return_stmt) => return_stmt.idx,
+      Stmt::Expr(expr_stmt) => expr_stmt.idx,
     }
   }
 }
@@ -84,9 +88,30 @@ pub struct ReturnStmt {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct ExprStmt {
+  pub idx: idx::AstNode,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct IntLit {
   pub value: u64,
   pub idx: idx::AstNode,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct VarDecl {
+  pub has_type: bool,
+  pub idx: idx::AstNode,
+}
+
+impl VarDecl {
+  pub fn name(&self, ctx: &Context) -> Ident {
+    let node = ctx.ast_node_at(self.idx + 1).unwrap();
+    let Node::Expr(Expr::Ident(ident)) = node else {
+      panic!("invalid ast mem data, expected Ident");
+    };
+    ident
+  }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -103,6 +128,14 @@ impl FnDecl {
     ctx.ast_node_at(self.idx + 2).unwrap()
   }
 
+  pub fn name(&self, ctx: &Context) -> Ident {
+    let node = ctx.ast_node_at(self.idx + 1).unwrap();
+    let Node::Expr(Expr::Ident(ident)) = node else {
+      panic!("invalid ast mem data, expected Ident");
+    };
+    ident
+  }
+
   pub fn statements(&self, ctx: &Context) -> BlockStmts {
     // TODO: skip arguments when present
     let ret_annot_idx = self.idx + 2;
@@ -116,6 +149,22 @@ impl FnDecl {
       num_stmts: block_stmt.num_stmts,
       progress: 0,
     }
+  }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Ident {
+  pub token: u32,
+  pub idx: idx::AstNode,
+}
+
+impl Ident {
+  pub fn lexeme<'a>(&self, ctx: &'a Context) -> &'a str {
+    let token = ctx.tokens[self.token as usize];
+    token.lexeme(&ctx.strs)
+  }
+  pub fn str_idx(&self, ctx: &Context) -> idx::StrPool {
+    ctx.str_idx(self.token)
   }
 }
 
@@ -137,18 +186,5 @@ impl BlockStmts {
     }
     self.progress += 1;
     ctx.ast_node_at(self.cur_idx)
-  }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub struct Ident {
-  pub token: u32,
-  pub idx: idx::AstNode,
-}
-
-impl Ident {
-  pub fn lexeme<'a>(&self, ctx: &'a Context) -> &'a str {
-    let token = ctx.tokens[self.token as usize];
-    token.lexeme(&ctx.strs)
   }
 }

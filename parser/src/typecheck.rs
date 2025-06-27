@@ -80,8 +80,10 @@ impl TypeChecker {
   fn visit_node(&mut self, node: &Node) -> TypeId {
     match node {
       Node::Decl(Decl::Fn(fn_decl)) => self.visit_fn_decl(fn_decl),
+      Node::Decl(Decl::Var(var_decl)) => todo!("typecheck var decl"),
       Node::Expr(Expr::Ident(ident)) => self.visit_ident(ident),
-      Node::Stmt(Stmt::Block(block)) => todo!(),
+      Node::Stmt(Stmt::Block(block)) => todo!("typecheck block stmt"),
+      Node::Stmt(Stmt::Expr(expr)) => todo!("typecheck expr stmt"),
       Node::Stmt(Stmt::Return(ret_stmt)) => self.visit_ret_stmt(ret_stmt),
       Node::Expr(Expr::IntLit(int_lit)) => self.visit_int_lit(int_lit),
       Node::Expr(Expr::MemberAccess(member_access)) => self.visit_member_access(member_access),

@@ -81,6 +81,13 @@ impl StringPool {
     let interned = &self.strs[index.usize()];
     interned.str(self)
   }
+
+  pub fn debug_print(&self) {
+    eprintln!("StrPool ({})", self.strs.len());
+    for i in 0..self.strs.len() {
+      eprintln!(" - {i}: `{}`", self.get(idx::StrPool::new(i as u32)));
+    }
+  }
 }
 
 impl Default for StringPool {

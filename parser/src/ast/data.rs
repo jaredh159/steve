@@ -47,22 +47,33 @@ impl AstData {
   pub fn index_after(&self, index: idx::AstNode) -> Option<idx::AstNode> {
     let selected = self.elems[index.usize()].as_ast();
     let next = match selected.node {
-      Mem::ReturnStmt | Mem::Ident | Mem::PlatformKeyword => index + 1,
+      Mem::ReturnStmt | Mem::Ident | Mem::PlatformKeyword | Mem::AsciiLit => Some(index + 1),
       Mem::FnDecl(fn_decl) => {
         // TODO: skip fn args
         let ret_annot = self.index_after(index + 1).unwrap();
         let block_stmt = self.index_after(ret_annot).unwrap();
-        self.elems[block_stmt.usize() + 1].as_next()
+        Some(self.elems[block_stmt.usize() + 1].as_next())
       }
       Mem::IntLit(int_data) => todo!(),
-      Mem::VarDeclStmt { has_type } => todo!(),
-      Mem::AsciiLit => todo!(),
-      Mem::ExprStmt => todo!(),
+      Mem::VarDeclStmt { has_type: false } => self.index_after(index + 2),
+      Mem::VarDeclStmt { has_type: true } => todo!(),
+      Mem::ExprStmt => self.index_after(index + 1),
       Mem::Block { num_stmts } => todo!(),
-      Mem::CallExpr { num_args } => todo!(),
-      Mem::MemberAccess { implicit } => todo!(),
+      Mem::CallExpr { num_args } => {
+        let mut callee = index + 1;
+        for _ in 0..num_args {
+          callee = self.index_after(callee)?;
+        }
+        self.index_after(callee)
+      }
+      Mem::MemberAccess { implicit: false } => {
+        let receiver_index = index + 1;
+        let member_index = self.index_after(receiver_index).unwrap();
+        self.index_after(member_index)
+      }
+      Mem::MemberAccess { implicit: true } => todo!(),
       Mem::Fixup => todo!(),
-    };
+    }?;
     if next.usize() >= self.elems.len() {
       None
     } else {
@@ -87,7 +98,7 @@ impl AstData {
         idx,
       })),
       Mem::Ident => Node::Expr(Expr::Ident(Ident { token: selected.token, idx })),
-      Mem::VarDeclStmt { has_type } => todo!(),
+      Mem::VarDeclStmt { has_type } => Node::Decl(Decl::Var(VarDecl { has_type, idx })),
       Mem::AsciiLit => todo!(),
       Mem::IntLit(int_data) => Node::Expr(Expr::IntLit(IntLit {
         value: u64::from(int_data.payload()),
@@ -95,7 +106,7 @@ impl AstData {
       })),
       Mem::Block { num_stmts: 0 } => Node::Stmt(Stmt::Block(BlockStmt { num_stmts: 0, idx })),
       Mem::Block { num_stmts } => Node::Stmt(Stmt::Block(BlockStmt { num_stmts, idx })),
-      Mem::ExprStmt => todo!(),
+      Mem::ExprStmt => Node::Stmt(Stmt::Expr(ExprStmt { idx })),
       Mem::CallExpr { num_args } => todo!(),
       Mem::MemberAccess { implicit } => {
         Node::Expr(Expr::MemberAccess(MemberAccess { implicit, idx }))

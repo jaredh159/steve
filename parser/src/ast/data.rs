@@ -7,10 +7,10 @@ pub struct AstData {
 }
 
 impl AstData {
-  pub fn push(&mut self, ast_node: Mem, token: u32) -> usize {
+  pub fn push(&mut self, ast_node: Mem, token: u32) -> idx::AstNode {
     let idx = self.elems.len();
     self.elems.push(Element::ast(ast_node, token));
-    idx
+    idx::AstNode::new(idx as u32)
   }
 
   pub fn with_capacity(capacity: usize) -> Self {
@@ -20,8 +20,8 @@ impl AstData {
     }
   }
 
-  pub fn get_mut(&mut self, index: usize) -> Option<&mut Element> {
-    self.elems.get_mut(index)
+  pub fn get_mut(&mut self, index: idx::AstNode) -> Option<&mut Element> {
+    self.elems.get_mut(index.usize())
   }
 
   pub fn get(&self, index: usize) -> Option<&Element> {
@@ -54,7 +54,7 @@ impl AstData {
         let block_stmt = self.index_after(ret_annot).unwrap();
         Some(self.elems[block_stmt.usize() + 1].as_next())
       }
-      Mem::IntLit(int_data) => todo!(),
+      Mem::IntLit(_) => Some(index + 1),
       Mem::VarDeclStmt { has_type: false } => self.index_after(index + 2),
       Mem::VarDeclStmt { has_type: true } => todo!(),
       Mem::ExprStmt => self.index_after(index + 1),
@@ -99,7 +99,7 @@ impl AstData {
       })),
       Mem::Ident => Node::Expr(Expr::Ident(Ident { token: selected.token, idx })),
       Mem::VarDeclStmt { has_type } => Node::Decl(Decl::Var(VarDecl { has_type, idx })),
-      Mem::AsciiLit => todo!(),
+      Mem::AsciiLit => Node::Expr(Expr::AsciiLit(AsciiLit { idx })),
       Mem::IntLit(int_data) => Node::Expr(Expr::IntLit(IntLit {
         value: u64::from(int_data.payload()),
         idx,
@@ -107,11 +107,11 @@ impl AstData {
       Mem::Block { num_stmts: 0 } => Node::Stmt(Stmt::Block(BlockStmt { num_stmts: 0, idx })),
       Mem::Block { num_stmts } => Node::Stmt(Stmt::Block(BlockStmt { num_stmts, idx })),
       Mem::ExprStmt => Node::Stmt(Stmt::Expr(ExprStmt { idx })),
-      Mem::CallExpr { num_args } => todo!(),
+      Mem::CallExpr { num_args } => Node::Expr(Expr::Call(CallExpr { num_args, idx })),
       Mem::MemberAccess { implicit } => {
         Node::Expr(Expr::MemberAccess(MemberAccess { implicit, idx }))
       }
-      Mem::PlatformKeyword => todo!(),
+      Mem::PlatformKeyword => Node::Expr(Expr::PlatformKeyword(PlatformKeyword { idx })),
       Mem::ReturnStmt => Node::Stmt(Stmt::Return(ReturnStmt { idx })),
       Mem::Fixup => panic!(),
     };

@@ -82,6 +82,16 @@ impl StringPool {
     interned.str(self)
   }
 
+  pub fn index_of(&self, s: &str) -> Option<idx::StrPool> {
+    for i in 0..self.strs.len() {
+      let idx = idx::StrPool::new(i as u32);
+      if self.get(idx) == s {
+        return Some(idx);
+      }
+    }
+    None
+  }
+
   pub fn debug_print(&self) {
     eprintln!("StrPool ({})", self.strs.len());
     for i in 0..self.strs.len() {

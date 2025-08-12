@@ -64,7 +64,7 @@ impl IntoAst for parse::Expr {
         nodes.push(AsciiLit, token);
       }
       parse::Expr::Call { token, num_args } => {
-        nodes.push(CallExpr { num_args }, token);
+        nodes.push(Mem::CallExpr { num_args }, token);
         for _ in 0..num_args {
           let arg = stack.pop_expr();
           arg.into_ast(stack, nodes);

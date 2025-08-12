@@ -6,8 +6,8 @@ pub struct Context {
   pub strs: StringPool,
   pub tokens: Vec<Token>,
   pub ast_data: AstData,
-  pub scopes: Vec<Scope>,
-  pub type_mismatches: Vec<TypeMismatch>,
+  pub scopes: Scopes,
+  pub type_errors: Vec<TypeErr>,
   pub parse_errors: Vec<ParseError>,
 }
 
@@ -18,8 +18,8 @@ impl Context {
       strs: StringPool::new(),
       tokens: Vec::with_capacity(128),
       ast_data: AstData::with_capacity(64),
-      scopes: Vec::with_capacity(16),
-      type_mismatches: Vec::new(),
+      scopes: Scopes::with_capacity(16),
+      type_errors: Vec::new(),
       parse_errors: Vec::new(),
     }
   }
@@ -45,6 +45,10 @@ impl Context {
 
   pub fn ast_node_after(&self, index: idx::AstNode) -> Option<Node> {
     self.ast_data.node_after(index)
+  }
+
+  pub fn token_str_idx(&self, token_idx: u32) -> idx::StrPool {
+    self.tokens[token_idx as usize].index
   }
 
   pub fn reset(mut self) -> Self {

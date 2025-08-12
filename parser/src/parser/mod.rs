@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 use crate::internal::{TokenKind as T, *};
+use ParseError as E;
 use into_mem::IntoAst;
 use mem::{Element, Mem};
 use parse_nodes::{self as parse, ParseNodes};
 use std::sync::Once;
 use tracing_subscriber::fmt::format::FmtSpan;
-use tracing_subscriber::{fmt, EnvFilter};
-use ParseError as E;
+use tracing_subscriber::{EnvFilter, fmt};
 
 mod into_mem;
 mod parse_nodes;
@@ -58,13 +58,12 @@ impl Parser {
 
   #[instrument(skip_all)]
   pub fn parse(mut self) -> Context {
-    trace!("Parser::parse()");
     while self.parse_decl() {}
     self.ctx.reset()
   }
 
   #[instrument(skip_all)]
-  fn parse_block_stmts(&mut self, token: u32) {
+  fn parse_block_stmts(&mut self, token: u32) -> idx::AstNode {
     let block_n = self.ctx.ast_data.push(Mem::Fixup, u32::MAX);
     let next_n = self.ctx.ast_data.push(Mem::Fixup, u32::MAX);
     let mut num_stmts = 0;
@@ -84,6 +83,7 @@ impl Parser {
     let next_idx = self.ctx.ast_data.len() as u32;
     let next_e = self.ctx.ast_data.get_mut(next_n).unwrap();
     *next_e = Element::idx(idx::AstNode::new(next_idx));
+    block_n
   }
 
   #[instrument(skip_all)]
@@ -105,9 +105,14 @@ impl Parser {
     if !self.cur_token_is(T::Let) || !self.peek_token_is(T::Ident) {
       return None;
     }
-    let token = self.advance();
-    let ident = parse::Expr::Ident { token: self.advance() };
+    let let_token = self.advance();
+    let ident_token = self.advance();
+    let ident = parse::Expr::Ident { token: ident_token };
     self.stack.push_expr(ident);
+
+    let ident = self.ctx.token_str_idx(ident_token);
+    let (scope, _) = self.ctx.scopes.current_mut();
+    scope.symbols.insert(ident, Symbol::undefined_var());
 
     // TODO: parse opt. type annotation, setting decl node if present
 
@@ -126,7 +131,7 @@ impl Parser {
 
     self.consume_expecting(T::Semicolon);
     self.stack.push_expr(expr);
-    Some(parse::Stmt::Let { token, has_type: false })
+    Some(parse::Stmt::Let { token: let_token, has_type: false })
   }
 
   #[instrument(skip_all)]
@@ -213,6 +218,10 @@ impl Parser {
       return false;
     };
 
+    let fn_name = self.ctx.token_str_idx(ident_token);
+    let (scope, cur_scope_idx) = self.ctx.scopes.current_mut();
+    scope.symbols.insert(fn_name, Symbol::undefined_fn());
+
     if self.consume_expecting(T::LParen).is_none() {
       self.synchronize();
       return false;
@@ -261,7 +270,9 @@ impl Parser {
     };
 
     fn_decl.into_ast(&mut self.stack, &mut self.ctx.ast_data);
-    self.parse_block_stmts(block_token);
+    let block_scope = self.ctx.scopes.push(cur_scope_idx);
+    let block_idx = self.parse_block_stmts(block_token);
+    self.ctx.scopes.set_node(block_scope, block_idx);
     true
   }
 
@@ -290,10 +301,10 @@ impl Parser {
       self.synchronize();
       return None;
     };
-    self.stack.push_expr(lhs);
     self
       .stack
       .push_expr(parse::Expr::Ident { token: ident_token });
+    self.stack.push_expr(lhs);
     Some(parse::Expr::MemberAccess { token: dot_token, implicit: false })
   }
 
@@ -447,10 +458,10 @@ fn configure_test_tracing() {
 mod tests {
   use super::*;
   use crate::ast::mem::*;
-  use pretty_assertions::assert_eq;
   use Dissembled as D;
   use Mem::*;
   use TokenNode as TN;
+  use pretty_assertions::assert_eq;
 
   #[test]
   fn parse_first_goal_program() {
@@ -461,31 +472,51 @@ mod tests {
         .err(17)
       }"#;
     let parser = Parser::new_str(input);
-    let dissembled = parser.parse().ast_data.dissemble();
+    let ctx = parser.parse();
+    let dissembled = ctx.ast_data.dissemble();
     assert_eq!(
       &dissembled,
       &[
-        D::Node(TN::new(FnDecl(FnDeclData::new(0, false, false)), 0)),
-        D::Node(TN::new(Ident, 1)), // "main"
+        D::Node(TN::new(Mem::FnDecl(FnDeclData::new(0, false, false)), 0)),
+        D::Node(TN::new(Mem::Ident, 1)), // "main"
         D::Node(TN::new(Mem::MemberAccess { implicit: false }, 6)), // type expr
-        D::Node(TN::new(PlatformKeyword, 5)), // "pf"
-        D::Node(TN::new(Ident, 7)), // "MainReturn"
-        D::Node(TN::new(Block { num_stmts: 3 }, 8)),
+        D::Node(TN::new(Mem::Ident, 7)), // "MainReturn"
+        D::Node(TN::new(Mem::PlatformKeyword, 5)), // "pf"
+        D::Node(TN::new(Mem::Block { num_stmts: 3 }, 8)),
         D::Idx(idx::AstNode::new(21)), // node after the block stmt
         D::Node(TN::new(VarDeclStmt { has_type: false }, 9)),
         D::Node(TN::new(Ident, 10)), // "msg"
         D::Node(TN::new(AsciiLit, 12)),
         D::Node(TN::new(ExprStmt, 14)),
-        D::Node(TN::new(CallExpr { num_args: 1 }, 17)),
-        D::Node(TN::new(Ident, 18)), // first arg `msg`
+        D::Node(TN::new(Mem::CallExpr { num_args: 1 }, 17)),
+        D::Node(TN::new(Mem::Ident, 18)), // first arg `msg`
         D::Node(TN::new(Mem::MemberAccess { implicit: false }, 15)),
-        D::Node(TN::new(PlatformKeyword, 14)), // "pf"
-        D::Node(TN::new(Ident, 16)),           // "print"
-        D::Node(TN::new(ReturnStmt, 21)),
-        D::Node(TN::new(CallExpr { num_args: 1 }, 23)),
-        D::Node(TN::new(IntLit(IntData::new(u2::new(0), u14::new(17))), 24)),
+        D::Node(TN::new(Mem::Ident, 16)),           // "print"
+        D::Node(TN::new(Mem::PlatformKeyword, 14)), // "pf"
+        D::Node(TN::new(Mem::ReturnStmt, 21)),
+        D::Node(TN::new(Mem::CallExpr { num_args: 1 }, 23)),
+        D::Node(TN::new(
+          Mem::IntLit(IntData::new(u2::new(0), u14::new(17))),
+          24
+        )),
         D::Node(TN::new(Mem::MemberAccess { implicit: true }, 21)),
-        D::Node(TN::new(Ident, 22)),
+        D::Node(TN::new(Mem::Ident, 22)),
+      ]
+    );
+    assert_eq!(
+      &ctx.scopes.as_slice(),
+      &[
+        Scope {
+          kind: ScopeKind::Global,
+          symbols: BTreeMap::from([(ctx.strs.index_of("main").unwrap(), Symbol::undefined_fn())])
+        },
+        Scope {
+          kind: ScopeKind::Child {
+            node: idx::AstNode::new(5),
+            parent: idx::ScopeId::new(0)
+          },
+          symbols: BTreeMap::from([(ctx.strs.index_of("msg").unwrap(), Symbol::undefined_var())])
+        }
       ]
     );
   }
@@ -493,17 +524,37 @@ mod tests {
   #[test]
   fn parse_fn_return_mismatch() {
     let parser = Parser::new_str("fn bad() -> bool { 3 }");
-    let dissembled = parser.parse().ast_data.dissemble();
+    let ctx = parser.parse();
+    let dissembled = ctx.ast_data.dissemble();
+    assert_eq!(
+      &ctx.scopes.as_slice(),
+      &[
+        Scope {
+          kind: ScopeKind::Global,
+          symbols: BTreeMap::from([(ctx.strs.index_of("bad").unwrap(), Symbol::undefined_fn())])
+        },
+        Scope {
+          kind: ScopeKind::Child {
+            node: idx::AstNode::new(3),
+            parent: idx::ScopeId::new(0)
+          },
+          symbols: BTreeMap::new()
+        }
+      ]
+    );
     assert_eq!(
       &dissembled,
       &[
-        D::Node(TN::new(FnDecl(FnDeclData::new(0, true, false)), 0)),
-        D::Node(TN::new(Ident, 1)), // "bad"
-        D::Node(TN::new(Ident, 5)), // "bool"
-        D::Node(TN::new(Block { num_stmts: 1 }, 6)),
+        D::Node(TN::new(Mem::FnDecl(FnDeclData::new(0, true, false)), 0)),
+        D::Node(TN::new(Mem::Ident, 1)), // "bad"
+        D::Node(TN::new(Mem::Ident, 5)), // "bool"
+        D::Node(TN::new(Mem::Block { num_stmts: 1 }, 6)),
         D::Idx(idx::AstNode::new(7)), // node after the block stmt
-        D::Node(TN::new(ReturnStmt, 7)),
-        D::Node(TN::new(IntLit(IntData::new(u2::new(0), u14::new(3))), 7)),
+        D::Node(TN::new(Mem::ReturnStmt, 7)),
+        D::Node(TN::new(
+          Mem::IntLit(IntData::new(u2::new(0), u14::new(3))),
+          7
+        )),
       ]
     );
   }

@@ -1,5 +1,6 @@
 mod data;
 pub(crate) mod mem;
+
 pub use data::{AstData, Dissembled};
 
 use crate::internal::*;
@@ -22,6 +23,9 @@ pub enum Expr {
   Ident(Ident),
   IntLit(IntLit),
   MemberAccess(MemberAccess),
+  AsciiLit(AsciiLit),
+  Call(CallExpr),
+  PlatformKeyword(PlatformKeyword),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -56,6 +60,9 @@ impl Expr {
       Expr::Ident(ident) => ident.idx,
       Expr::IntLit(int_lit) => int_lit.idx,
       Expr::MemberAccess(member_access) => member_access.idx,
+      Expr::AsciiLit(ascii_lit) => ascii_lit.idx,
+      Expr::Call(call) => call.idx,
+      Expr::PlatformKeyword(platform_keyword) => platform_keyword.idx,
     }
   }
 }
@@ -82,9 +89,32 @@ pub struct MemberAccess {
   pub idx: idx::AstNode,
 }
 
+impl MemberAccess {
+  pub fn member(&self, ctx: &Context) -> Ident {
+    let node = ctx.ast_node_at(self.idx + 1).unwrap();
+    let Node::Expr(Expr::Ident(ident)) = node else {
+      panic!("invalid ast mem data, expected Ident");
+    };
+    ident
+  }
+  pub fn receiver(&self, ctx: &Context) -> Option<Node> {
+    if self.implicit { None } else { ctx.ast_node_at(self.idx + 2) }
+  }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct ReturnStmt {
   pub idx: idx::AstNode,
+}
+
+impl ReturnStmt {
+  pub fn expr(&self, ctx: &Context) -> Expr {
+    let node = ctx.ast_node_at(self.idx + 1).unwrap();
+    let Node::Expr(expr) = node else {
+      panic!("invalid ast mem data, expected Expr");
+    };
+    expr
+  }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -92,10 +122,79 @@ pub struct ExprStmt {
   pub idx: idx::AstNode,
 }
 
+impl ExprStmt {
+  pub fn expr(&self, ctx: &Context) -> Expr {
+    let node = ctx.ast_node_at(self.idx + 1).unwrap();
+    let Node::Expr(expr) = node else {
+      panic!("invalid ast mem data, expected Expr");
+    };
+    expr
+  }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct IntLit {
   pub value: u64,
   pub idx: idx::AstNode,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct AsciiLit {
+  pub idx: idx::AstNode,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct PlatformKeyword {
+  pub idx: idx::AstNode,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct CallExpr {
+  pub num_args: u8,
+  pub idx: idx::AstNode,
+}
+
+impl CallExpr {
+  pub fn callee(&self, ctx: &Context) -> Node {
+    let mut idx = self.idx + 1;
+    for _ in 0..self.num_args {
+      idx = ctx.ast_index_after(idx).unwrap();
+    }
+    ctx.ast_node_at(idx).unwrap()
+  }
+
+  pub fn args(&self, ctx: &Context) -> CallArgs {
+    CallArgs {
+      cur_idx: self.idx,
+      num_args: self.num_args,
+      progress: 0,
+    }
+  }
+}
+
+#[derive(Debug)]
+pub struct CallArgs {
+  cur_idx: idx::AstNode,
+  num_args: u8,
+  progress: u8,
+}
+
+impl CallArgs {
+  pub fn next(&mut self, ctx: &Context) -> Option<Expr> {
+    if self.num_args == self.progress {
+      return None;
+    } else if self.progress == 0 {
+      self.cur_idx += 1;
+    } else {
+      self.cur_idx = ctx.ast_index_after(self.cur_idx).unwrap();
+    }
+    self.progress += 1;
+    let node = ctx.ast_node_at(self.cur_idx).unwrap();
+    let Node::Expr(expr) = node else {
+      panic!("invalid ast mem data, expected Ident");
+    };
+    Some(expr)
+  }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -112,6 +211,20 @@ impl VarDecl {
     };
     ident
   }
+
+  pub fn expr(&self, ctx: &Context) -> Expr {
+    let ident_idx = self.idx + 1;
+    let expr_idx = if self.has_type {
+      ctx.ast_index_after(ident_idx + 1).unwrap()
+    } else {
+      ident_idx + 1
+    };
+    let node = ctx.ast_node_at(expr_idx).unwrap();
+    let Node::Expr(expr) = node else {
+      panic!("invalid ast mem data, expected Expr");
+    };
+    expr
+  }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -123,9 +236,13 @@ pub struct FnDecl {
 }
 
 impl FnDecl {
-  pub fn return_annotation(&self, ctx: &Context) -> Node {
+  pub fn return_annotation(&self, ctx: &Context) -> Expr {
     // TODO: skip arguments when present
-    ctx.ast_node_at(self.idx + 2).unwrap()
+    let node = ctx.ast_node_at(self.idx + 2).unwrap();
+    let Node::Expr(expr) = node else {
+      panic!("invalid ast mem data, expected Expr");
+    };
+    expr
   }
 
   pub fn name(&self, ctx: &Context) -> Ident {
@@ -152,7 +269,7 @@ impl FnDecl {
   }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Ident {
   pub token: u32,
   pub idx: idx::AstNode,
@@ -166,6 +283,11 @@ impl Ident {
   pub fn str_idx(&self, ctx: &Context) -> idx::StrPool {
     ctx.str_idx(self.token)
   }
+}
+
+#[test]
+fn sizes_of_copy_structs() {
+  assert!(std::mem::size_of::<Ident>() <= 8);
 }
 
 #[derive(Debug)]
